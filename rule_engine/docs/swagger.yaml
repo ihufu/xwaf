@@ -1,0 +1,338 @@
+basePath: /api/v1
+definitions:
+  model.CCRule:
+    properties:
+      created_at:
+        description: 创建时间
+        type: string
+      id:
+        description: 规则ID
+        type: integer
+      limit_rate:
+        description: 限制速率
+        type: integer
+      limit_unit:
+        description: 限制单位
+        type: string
+      status:
+        description: 状态
+        type: string
+      time_window:
+        description: 时间窗口
+        type: integer
+      updated_at:
+        description: 更新时间
+        type: string
+      uri:
+        description: 请求URI
+        type: string
+    type: object
+  model.Response:
+    properties:
+      code:
+        type: integer
+      data: {}
+      message:
+        type: string
+    type: object
+  model.RuleSyncLog:
+    properties:
+      created_at:
+        description: 创建时间
+        type: string
+      id:
+        description: 日志ID
+        type: integer
+      message:
+        description: 详细信息
+        type: string
+      rule_id:
+        description: 规则ID
+        type: integer
+      status:
+        description: 同步状态
+        type: string
+      sync_type:
+        description: 同步类型
+        type: string
+      version:
+        description: 版本号
+        type: integer
+    type: object
+  model.RuleVersion:
+    properties:
+      change_type:
+        description: 变更类型(create/update/delete)
+        type: string
+      content:
+        description: 规则内容
+        type: string
+      created_at:
+        description: 创建时间
+        type: string
+      created_by:
+        description: 创建者
+        type: integer
+      hash:
+        description: 内容哈希值
+        type: string
+      id:
+        description: 版本ID
+        type: integer
+      rule_id:
+        description: 规则ID
+        type: integer
+      status:
+        description: 状态
+        type: string
+      version:
+        description: 版本号
+        type: integer
+    type: object
+info:
+  contact: {}
+  description: wArmor规则引擎API接口文档
+  title: wArmor规则引擎API服务
+  version: "1.0"
+paths:
+  /cc-rules:
+    get:
+      description: 获取CC规则列表
+      parameters:
+      - description: 页码
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量
+        in: query
+        name: size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/model.CCRule'
+                  type: array
+              type: object
+      summary: 获取CC规则列表
+      tags:
+      - CC规则
+    post:
+      consumes:
+      - application/json
+      description: 创建CC规则
+      parameters:
+      - description: CC规则
+        in: body
+        name: rule
+        required: true
+        schema:
+          $ref: '#/definitions/model.CCRule'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 创建CC规则
+      tags:
+      - CC规则
+  /cc-rules/{id}:
+    delete:
+      description: 删除CC规则
+      parameters:
+      - description: 规则ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 删除CC规则
+      tags:
+      - CC规则
+    get:
+      description: 获取CC规则
+      parameters:
+      - description: 规则ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/model.CCRule'
+              type: object
+      summary: 获取CC规则
+      tags:
+      - CC规则
+    put:
+      consumes:
+      - application/json
+      description: 更新CC规则
+      parameters:
+      - description: 规则ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: CC规则
+        in: body
+        name: rule
+        required: true
+        schema:
+          $ref: '#/definitions/model.CCRule'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 更新CC规则
+      tags:
+      - CC规则
+  /cc-rules/check/{uri}:
+    get:
+      description: 检查CC限制
+      parameters:
+      - description: 请求URI
+        in: path
+        name: uri
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 检查CC限制
+      tags:
+      - CC规则
+  /rules/{rule_id}/sync-logs:
+    get:
+      description: 获取同步日志
+      parameters:
+      - description: 规则ID
+        in: path
+        name: rule_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/model.RuleSyncLog'
+                  type: array
+              type: object
+      summary: 获取同步日志
+      tags:
+      - 规则版本
+  /rules/{rule_id}/versions:
+    get:
+      description: 获取规则版本列表
+      parameters:
+      - description: 规则ID
+        in: path
+        name: rule_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/model.RuleVersion'
+                  type: array
+              type: object
+      summary: 获取规则版本列表
+      tags:
+      - 规则版本
+  /rules/{rule_id}/versions/{version}:
+    get:
+      description: 获取规则版本
+      parameters:
+      - description: 规则ID
+        in: path
+        name: rule_id
+        required: true
+        type: integer
+      - description: 版本号
+        in: path
+        name: version
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/model.RuleVersion'
+              type: object
+      summary: 获取规则版本
+      tags:
+      - 规则版本
+  /rules/versions:
+    post:
+      consumes:
+      - application/json
+      description: 创建规则版本
+      parameters:
+      - description: 规则版本
+        in: body
+        name: version
+        required: true
+        schema:
+          $ref: '#/definitions/model.RuleVersion'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 创建规则版本
+      tags:
+      - 规则版本
+swagger: "2.0"

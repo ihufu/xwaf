@@ -1,0 +1,55 @@
+version: '3'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: waf-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: waf
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - mysql_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password
+    networks:
+      - waf-network
+
+  redis:
+    image: redis:6.2
+    container_name: waf-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - waf-network
+
+  rule-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: waf-rule-engine
+    restart: always
+    depends_on:
+      - mysql
+      - redis
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./configs:/app/configs
+      - ./logs:/app/logs
+    networks:
+      - waf-network
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  waf-network:
+    driver: bridge 

@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  waf:
+    image: m1911/xwaf-core:test
+    ports:
+      - "80:80"
+    volumes:
+      - ./core/lua:/usr/local/openresty/xwaf/core/lua
+      - ./core/conf/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf
+      - ./core/conf/conf.d:/usr/local/openresty/nginx/conf/conf.d
+      - ./logs:/usr/local/openresty/nginx/logs
+    networks:
+      - waf_net
+    restart: always
+
+networks:
+  waf_net: 
