@@ -1,10 +1,11 @@
 package model
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/xwaf/rule_engine/internal/errors"
 )
 
 // SQLToken SQL Token
@@ -41,7 +42,11 @@ func NewSQLInjectionDetector() *SQLInjectionDetector {
 }
 
 // DetectInjection 检测SQL注入
-func (d *SQLInjectionDetector) DetectInjection(input string) (bool, string) {
+func (d *SQLInjectionDetector) DetectInjection(input string) (bool, error) {
+	if input == "" {
+		return false, errors.NewError(errors.ErrValidation, "输入不能为空")
+	}
+
 	d.lexer = NewSQLLexer(input)
 	tokens := make([]*SQLToken, 0)
 
@@ -77,10 +82,10 @@ func (d *SQLInjectionDetector) DetectInjection(input string) (bool, string) {
 
 	// 根据得分判断是否存在注入
 	if score >= 3 {
-		return true, strings.Join(reasons, "；")
+		return true, errors.NewError(errors.ErrSQLInjection, strings.Join(reasons, "；"))
 	}
 
-	return false, ""
+	return false, nil
 }
 
 // hasUnionSelect 检查是否存在UNION SELECT注入
@@ -148,6 +153,7 @@ type RuleSyncLog struct {
 	Status    string    `json:"status" db:"status"`
 	Message   string    `json:"message" db:"message"`
 	SyncType  string    `json:"sync_type" db:"sync_type"`
+	CreatedBy string    `json:"created_by" db:"created_by"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 }
 
@@ -191,26 +197,53 @@ type CheckRequest struct {
 // Validate 验证请求参数
 func (r *CheckRequest) Validate() error {
 	if r.URI == "" {
-		return fmt.Errorf("uri不能为空")
+		return errors.NewError(errors.ErrValidation, "uri不能为空")
 	}
+
+	if r.ClientIP == "" {
+		return errors.NewError(errors.ErrValidation, "client_ip不能为空")
+	}
+
+	if r.Method == "" {
+		return errors.NewError(errors.ErrValidation, "method不能为空")
+	}
+
+	if len(r.RuleTypes) == 0 {
+		return errors.NewError(errors.ErrValidation, "rule_types不能为空")
+	}
+
 	return nil
 }
 
+// RuleUpdateType 规则更新类型
+type RuleUpdateType string
+
+const (
+	RuleUpdateTypeCreate   RuleUpdateType = "create"   // 创建规则
+	RuleUpdateTypeUpdate   RuleUpdateType = "update"   // 更新规则
+	RuleUpdateTypeDelete   RuleUpdateType = "delete"   // 删除规则
+	RuleUpdateTypeRollback RuleUpdateType = "rollback" // 回滚规则
+)
+
 // RuleDiff 规则变更记录
 type RuleDiff struct {
-	RuleID    int64  `json:"rule_id"`
-	Operation string `json:"operation"`
-	OldRule   *Rule  `json:"old_rule"`
-	NewRule   *Rule  `json:"new_rule"`
+	RuleID     int64          `json:"rule_id"`     // 规则ID
+	Name       string         `json:"name"`        // 规则名称
+	Pattern    string         `json:"pattern"`     // 规则模式
+	Action     ActionType     `json:"action"`      // 规则动作
+	Status     StatusType     `json:"status"`      // 规则状态
+	Version    int64          `json:"version"`     // 规则版本
+	UpdateType RuleUpdateType `json:"update_type"` // 更新类型
+	UpdateTime time.Time      `json:"update_time"` // 更新时间
 }
 
 // RuleUpdateEvent 规则更新事件
 type RuleUpdateEvent struct {
-	ID        int64       `json:"id"`
-	Version   int64       `json:"version"`
-	Action    string      `json:"action"`
-	RuleDiffs []*RuleDiff `json:"rule_diffs"`
-	CreatedAt time.Time   `json:"created_at"`
+	ID        int64          `json:"id"`
+	Version   int64          `json:"version"`
+	Action    RuleUpdateType `json:"action"`
+	RuleDiffs []*RuleDiff    `json:"rule_diffs"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
 // RuleMatch 规则匹配结果

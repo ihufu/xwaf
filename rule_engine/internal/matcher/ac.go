@@ -2,8 +2,10 @@ package matcher
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/model"
 )
 
@@ -34,6 +36,14 @@ func NewACMatcher() *ACMatcher {
 
 // Add 添加规则到AC自动机
 func (m *ACMatcher) Add(rule *model.Rule) error {
+	if rule == nil {
+		return errors.NewError(errors.ErrRuleMatch, "规则不能为空")
+	}
+
+	if rule.Pattern == "" {
+		return errors.NewError(errors.ErrRuleMatch, "规则模式不能为空")
+	}
+
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -93,8 +103,34 @@ func (m *ACMatcher) buildFailPointers() {
 
 // Remove 从AC自动机中移除规则
 func (m *ACMatcher) Remove(ruleID int64) error {
+	if ruleID <= 0 {
+		return errors.NewError(errors.ErrRuleMatch, "无效的规则ID")
+	}
+
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
+
+	// 检查规则是否存在
+	exists := false
+	var checkExists func(*ACNode)
+	checkExists = func(node *ACNode) {
+		if node.isEnd {
+			for _, rule := range node.rules {
+				if rule.ID == ruleID {
+					exists = true
+					return
+				}
+			}
+		}
+		for _, child := range node.children {
+			checkExists(child)
+		}
+	}
+	checkExists(m.root)
+
+	if !exists {
+		return errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("规则不存在: %d", ruleID))
+	}
 
 	// 重建AC自动机
 	newRoot := &ACNode{
@@ -135,9 +171,16 @@ func (m *ACMatcher) removeRule(node *ACNode, ruleID int64, newNode *ACNode) {
 
 // Match 使用AC自动机进行匹配
 func (m *ACMatcher) Match(ctx context.Context, req *model.CheckRequest) ([]*model.RuleMatch, error) {
-	// 检查 context 是否已取消
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("上下文已取消: %v", err))
+	}
+
+	if req == nil {
+		return nil, errors.NewError(errors.ErrRuleMatch, "请求参数不能为空")
+	}
+
+	if req.URI == "" {
+		return nil, errors.NewError(errors.ErrRuleMatch, "请求URI不能为空")
 	}
 
 	m.mutex.RLock()
@@ -158,7 +201,7 @@ func (m *ACMatcher) Match(ctx context.Context, req *model.CheckRequest) ([]*mode
 		checkCounter++
 		if checkCounter >= checkInterval {
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("上下文已取消: %v", err))
 			}
 			checkCounter = 0
 		}

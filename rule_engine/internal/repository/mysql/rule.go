@@ -8,6 +8,7 @@ import (
 	"regexp"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/model"
 	"github.com/xwaf/rule_engine/internal/repository"
 	"gorm.io/gorm"
@@ -26,21 +27,41 @@ func NewRuleRepository(db *gorm.DB, rdb *redis.Client) repository.RuleRepository
 }
 
 func (r *RuleRepository) CreateRule(ctx context.Context, rule *model.Rule) error {
-	return r.db.WithContext(ctx).Create(rule).Error
+	if err := r.db.WithContext(ctx).Create(rule).Error; err != nil {
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("创建规则失败: %v", err))
+	}
+	return nil
 }
 
 func (r *RuleRepository) UpdateRule(ctx context.Context, rule *model.Rule) error {
-	return r.db.WithContext(ctx).Save(rule).Error
+	result := r.db.WithContext(ctx).Save(rule)
+	if result.Error != nil {
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("更新规则失败: %v", result.Error))
+	}
+	if result.RowsAffected == 0 {
+		return errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("规则不存在: %d", rule.ID))
+	}
+	return nil
 }
 
 func (r *RuleRepository) DeleteRule(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Delete(&model.Rule{}, id).Error
+	result := r.db.WithContext(ctx).Delete(&model.Rule{}, id)
+	if result.Error != nil {
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("删除规则失败: %v", result.Error))
+	}
+	if result.RowsAffected == 0 {
+		return errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("规则不存在: %d", id))
+	}
+	return nil
 }
 
 func (r *RuleRepository) GetRule(ctx context.Context, id int64) (*model.Rule, error) {
 	var rule model.Rule
 	if err := r.db.WithContext(ctx).First(&rule, id).Error; err != nil {
-		return nil, err
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("规则不存在: %d", id))
+		}
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取规则失败: %v", err))
 	}
 	return &rule, nil
 }
@@ -71,12 +92,12 @@ func (r *RuleRepository) ListRules(ctx context.Context, query *repository.RuleQu
 	}
 
 	if err := db.Count(&total).Error; err != nil {
-		return nil, 0, err
+		return nil, 0, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取规则总数失败: %v", err))
 	}
 
 	offset := (query.Page - 1) * query.PageSize
 	if err := db.Offset(offset).Limit(query.PageSize).Find(&rules).Error; err != nil {
-		return nil, 0, err
+		return nil, 0, errors.NewError(errors.ErrSystem, fmt.Sprintf("查询规则列表失败: %v", err))
 	}
 
 	return rules, total, nil
@@ -84,32 +105,45 @@ func (r *RuleRepository) ListRules(ctx context.Context, query *repository.RuleQu
 
 func (r *RuleRepository) GetLatestVersion(ctx context.Context) (int64, error) {
 	var version int64
-	err := r.db.WithContext(ctx).Model(&model.Rule{}).Select("COALESCE(MAX(version), 0)").Scan(&version).Error
-	return version, err
+	if err := r.db.WithContext(ctx).Model(&model.Rule{}).Select("COALESCE(MAX(version), 0)").Scan(&version).Error; err != nil {
+		return 0, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取最新版本号失败: %v", err))
+	}
+	return version, nil
 }
 
 func (r *RuleRepository) BatchCreateRules(ctx context.Context, rules []*model.Rule) error {
-	return r.db.WithContext(ctx).Create(rules).Error
+	if err := r.db.WithContext(ctx).Create(rules).Error; err != nil {
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("批量创建规则失败: %v", err))
+	}
+	return nil
 }
 
 func (r *RuleRepository) BatchDeleteRules(ctx context.Context, ids []int64) error {
-	return r.db.WithContext(ctx).Delete(&model.Rule{}, ids).Error
+	result := r.db.WithContext(ctx).Delete(&model.Rule{}, ids)
+	if result.Error != nil {
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("批量删除规则失败: %v", result.Error))
+	}
+	if result.RowsAffected == 0 {
+		return errors.NewError(errors.ErrRuleNotFound, "未找到要删除的规则")
+	}
+	return nil
 }
 
-// BatchUpdateRules 批量更新规则
 func (r *RuleRepository) BatchUpdateRules(ctx context.Context, rules []*model.Rule) error {
-	// 使用事务确保批量更新的原子性
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, rule := range rules {
-			if err := tx.Save(rule).Error; err != nil {
-				return err
+			result := tx.Save(rule)
+			if result.Error != nil {
+				return errors.NewError(errors.ErrSystem, fmt.Sprintf("更新规则失败: %v", result.Error))
+			}
+			if result.RowsAffected == 0 {
+				return errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("规则不存在: %d", rule.ID))
 			}
 		}
 		return nil
 	})
 }
 
-// CreateRuleAuditLog 创建规则审计日志
 func (r *RuleRepository) CreateRuleAuditLog(ctx context.Context, log *model.RuleAuditLog) error {
 	// 设置创建时间
 	if log.CreatedAt.IsZero() {
@@ -119,42 +153,62 @@ func (r *RuleRepository) CreateRuleAuditLog(ctx context.Context, log *model.Rule
 	// 将审计日志保存到数据库
 	result := r.db.WithContext(ctx).Create(log)
 	if result.Error != nil {
-		return fmt.Errorf("创建规则审计日志失败: %w", result.Error)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("创建规则审计日志失败: %v", result.Error))
 	}
 
 	return nil
 }
 
-// CreateRuleGroup 创建规则组
 func (r *RuleRepository) CreateRuleGroup(ctx context.Context, group *model.RuleGroup) error {
-	return r.db.WithContext(ctx).Create(group).Error
+	if err := r.ValidateRuleGroup(ctx, group); err != nil {
+		return err
+	}
+	if err := r.db.WithContext(ctx).Create(group).Error; err != nil {
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("创建规则组失败: %v", err))
+	}
+	return nil
 }
 
-// UpdateRuleGroup 更新规则组
 func (r *RuleRepository) UpdateRuleGroup(ctx context.Context, group *model.RuleGroup) error {
-	return r.db.WithContext(ctx).Save(group).Error
+	if err := r.ValidateRuleGroup(ctx, group); err != nil {
+		return err
+	}
+	result := r.db.WithContext(ctx).Save(group)
+	if result.Error != nil {
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("更新规则组失败: %v", result.Error))
+	}
+	if result.RowsAffected == 0 {
+		return errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("规则组不存在: %d", group.ID))
+	}
+	return nil
 }
 
-// DeleteRuleGroup 删除规则组
 func (r *RuleRepository) DeleteRuleGroup(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Delete(&model.RuleGroup{}, id).Error
+	result := r.db.WithContext(ctx).Delete(&model.RuleGroup{}, id)
+	if result.Error != nil {
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("删除规则组失败: %v", result.Error))
+	}
+	if result.RowsAffected == 0 {
+		return errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("规则组不存在: %d", id))
+	}
+	return nil
 }
 
-// GetRuleGroup 获取规则组
 func (r *RuleRepository) GetRuleGroup(ctx context.Context, id int64) (*model.RuleGroup, error) {
 	var group model.RuleGroup
 	err := r.db.WithContext(ctx).First(&group, id).Error
 	if err != nil {
-		return nil, err
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("规则组不存在: %d", id))
+		}
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取规则组失败: %v", err))
 	}
 	return &group, nil
 }
 
-// ListRuleGroups 列出规则组
 func (r *RuleRepository) ListRuleGroups(ctx context.Context, query *repository.RuleQuery) ([]*model.RuleGroup, int64, error) {
 	db := r.db.WithContext(ctx).Model(&model.RuleGroup{})
 
-	// 应用查询条件
 	if query.Keyword != "" {
 		db = db.Where("name LIKE ? OR description LIKE ?", "%"+query.Keyword+"%", "%"+query.Keyword+"%")
 	}
@@ -174,13 +228,11 @@ func (r *RuleRepository) ListRuleGroups(ctx context.Context, query *repository.R
 		db = db.Where("created_at <= ?", query.EndTime)
 	}
 
-	// 获取总数
 	var total int64
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// 应用分页和排序
 	if query.OrderBy != "" {
 		if query.OrderDesc {
 			db = db.Order(query.OrderBy + " DESC")
@@ -193,7 +245,6 @@ func (r *RuleRepository) ListRuleGroups(ctx context.Context, query *repository.R
 		db = db.Offset(offset).Limit(query.PageSize)
 	}
 
-	// 获取数据
 	var groups []*model.RuleGroup
 	if err := db.Find(&groups).Error; err != nil {
 		return nil, 0, err
@@ -202,168 +253,213 @@ func (r *RuleRepository) ListRuleGroups(ctx context.Context, query *repository.R
 	return groups, total, nil
 }
 
-// GetRulesByVersion 获取指定版本的规则
 func (r *RuleRepository) GetRulesByVersion(ctx context.Context, version int64) ([]*model.Rule, error) {
 	var rules []*model.Rule
 	err := r.db.WithContext(ctx).Where("version = ?", version).Find(&rules).Error
 	if err != nil {
-		return nil, err
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取指定版本规则失败: %v", err))
 	}
 	return rules, nil
 }
 
-// RollbackRules 回滚规则
-func (r *RuleRepository) RollbackRules(ctx context.Context, rules []*model.Rule, event *model.RuleUpdateEvent) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 记录当前规则状态
-		var currentRules []*model.Rule
-		if err := tx.Where("version = ?", event.Version).Find(&currentRules).Error; err != nil {
-			return fmt.Errorf("获取当前版本规则失败: %v", err)
+func (r *RuleRepository) RollbackRules(ctx context.Context, version int64) error {
+	// 获取当前规则
+	var currentRules []*model.Rule
+	if err := r.db.WithContext(ctx).Find(&currentRules).Error; err != nil {
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("获取当前规则失败: %v", err))
+	}
+
+	// 获取目标版本规则
+	var targetRules []*model.Rule
+	if err := r.db.WithContext(ctx).Where("version = ?", version).Find(&targetRules).Error; err != nil {
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("获取目标版本规则失败: %v", err))
+	}
+
+	// 创建回滚事件
+	event := &model.RuleUpdateEvent{
+		Version:   version,
+		Action:    model.RuleUpdateTypeRollback,
+		RuleDiffs: make([]*model.RuleDiff, 0),
+		CreatedAt: time.Now(),
+	}
+
+	// 记录规则变更
+	for _, rule := range currentRules {
+		diff := &model.RuleDiff{
+			RuleID:     rule.ID,
+			Name:       rule.Name,
+			Pattern:    rule.Pattern,
+			Action:     rule.Action,
+			Status:     rule.Status,
+			Version:    version,
+			UpdateType: model.RuleUpdateTypeDelete,
+			UpdateTime: time.Now(),
 		}
+		event.RuleDiffs = append(event.RuleDiffs, diff)
+	}
 
-		// 创建回滚事件
-		event.Action = "rollback"
-		event.RuleDiffs = make([]*model.RuleDiff, 0)
-
-		// 记录规则变更
-		ruleMap := make(map[int64]*model.Rule)
-		for _, rule := range currentRules {
-			ruleMap[rule.ID] = rule
+	for _, rule := range targetRules {
+		diff := &model.RuleDiff{
+			RuleID:     rule.ID,
+			Name:       rule.Name,
+			Pattern:    rule.Pattern,
+			Action:     rule.Action,
+			Status:     rule.Status,
+			Version:    version,
+			UpdateType: model.RuleUpdateTypeCreate,
+			UpdateTime: time.Now(),
 		}
+		event.RuleDiffs = append(event.RuleDiffs, diff)
+	}
 
-		// 删除当前版本的规则
-		if err := tx.Where("version = ?", event.Version).Delete(&model.Rule{}).Error; err != nil {
-			return fmt.Errorf("删除当前版本规则失败: %v", err)
-		}
+	// 开启事务
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("开启事务失败: %v", tx.Error))
+	}
 
-		// 创建回滚的规则
-		for _, rule := range rules {
-			// 记录规则变更
-			if oldRule, exists := ruleMap[rule.ID]; exists {
-				event.RuleDiffs = append(event.RuleDiffs, &model.RuleDiff{
-					OldRule: oldRule,
-					NewRule: rule,
-				})
-			} else {
-				event.RuleDiffs = append(event.RuleDiffs, &model.RuleDiff{
-					OldRule: oldRule,
-					NewRule: rule,
-				})
-			}
+	// 删除当前规则
+	if err := tx.Delete(&model.Rule{}).Error; err != nil {
+		tx.Rollback()
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("删除当前规则失败: %v", err))
+	}
 
-			// 创建规则
-			if err := tx.Create(rule).Error; err != nil {
-				return fmt.Errorf("创建回滚规则失败: %v", err)
-			}
-		}
+	// 创建目标版本规则
+	if err := tx.Create(&targetRules).Error; err != nil {
+		tx.Rollback()
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("创建目标版本规则失败: %v", err))
+	}
 
-		// 记录被删除的规则
-		for _, oldRule := range currentRules {
-			found := false
-			for _, rule := range rules {
-				if rule.ID == oldRule.ID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				event.RuleDiffs = append(event.RuleDiffs, &model.RuleDiff{
-					OldRule: oldRule,
-					NewRule: oldRule,
-				})
-			}
-		}
+	// 记录回滚事件
+	if err := tx.Create(event).Error; err != nil {
+		tx.Rollback()
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("记录回滚事件失败: %v", err))
+	}
 
-		// 记录回滚事件
-		if err := tx.Create(event).Error; err != nil {
-			return fmt.Errorf("记录回滚事件失败: %v", err)
-		}
+	// 提交事务
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("提交事务失败: %v", err))
+	}
 
-		return nil
-	})
+	return nil
 }
 
-// ValidateRule 验证规则
 func (r *RuleRepository) ValidateRule(ctx context.Context, rule *model.Rule) error {
+	if rule == nil {
+		return errors.NewError(errors.ErrRuleValidation, "规则不能为空")
+	}
+
+	if rule.Name == "" {
+		return errors.NewError(errors.ErrRuleValidation, "规则名称不能为空")
+	}
+
+	if rule.Pattern == "" {
+		return errors.NewError(errors.ErrRuleValidation, "规则模式不能为空")
+	}
+
 	// 检查规则名称是否重复
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.Rule{}).
 		Where("name = ? AND id != ?", rule.Name, rule.ID).
 		Count(&count).Error
 	if err != nil {
-		return err
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("检查规则名称重复失败: %v", err))
 	}
 	if count > 0 {
-		return fmt.Errorf("rule name %s already exists", rule.Name)
+		return errors.NewError(errors.ErrRuleValidation, fmt.Sprintf("规则名称已存在: %s", rule.Name))
 	}
+
+	// 验证正则表达式
+	if _, err := regexp.Compile(rule.Pattern); err != nil {
+		return errors.NewError(errors.ErrRuleValidation, fmt.Sprintf("规则模式不是有效的正则表达式: %v", err))
+	}
+
 	return nil
 }
 
-// ValidateRuleGroup 验证规则组
 func (r *RuleRepository) ValidateRuleGroup(ctx context.Context, group *model.RuleGroup) error {
+	if group == nil {
+		return errors.NewError(errors.ErrRuleValidation, "规则组不能为空")
+	}
+
+	if group.Name == "" {
+		return errors.NewError(errors.ErrRuleValidation, "规则组名称不能为空")
+	}
+
 	// 检查规则组名称是否重复
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.RuleGroup{}).
 		Where("name = ? AND id != ?", group.Name, group.ID).
 		Count(&count).Error
 	if err != nil {
-		return err
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("检查规则组名称重复失败: %v", err))
 	}
 	if count > 0 {
-		return fmt.Errorf("rule group name %s already exists", group.Name)
+		return errors.NewError(errors.ErrRuleValidation, fmt.Sprintf("规则组名称已存在: %s", group.Name))
 	}
 	return nil
 }
 
-// GetRuleStats 获取规则统计信息
 func (r *RuleRepository) GetRuleStats(ctx context.Context) (*model.RuleStats, error) {
 	var stats model.RuleStats
 
-	// 获取总规则数
-	if err := r.db.WithContext(ctx).Model(&model.Rule{}).Count(&stats.TotalRules).Error; err != nil {
-		return nil, err
-	}
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 获取总规则数
+		if err := tx.Model(&model.Rule{}).Count(&stats.TotalRules).Error; err != nil {
+			return errors.NewError(errors.ErrSystem, fmt.Sprintf("获取规则总数失败: %v", err))
+		}
 
-	// 获取启用和禁用规则数
-	if err := r.db.WithContext(ctx).Model(&model.Rule{}).Where("status = ?", model.StatusEnabled).Count(&stats.EnabledRules).Error; err != nil {
-		return nil, err
-	}
-	stats.DisabledRules = stats.TotalRules - stats.EnabledRules
+		// 获取启用规则数
+		if err := tx.Model(&model.Rule{}).Where("status = ?", model.RuleStatusEnabled).Count(&stats.EnabledRules).Error; err != nil {
+			return errors.NewError(errors.ErrSystem, fmt.Sprintf("获取启用规则数失败: %v", err))
+		}
 
-	return &stats, nil
-}
+		// 获取禁用规则数
+		if err := tx.Model(&model.Rule{}).Where("status = ?", model.RuleStatusDisabled).Count(&stats.DisabledRules).Error; err != nil {
+			return errors.NewError(errors.ErrSystem, fmt.Sprintf("获取禁用规则数失败: %v", err))
+		}
 
-// GetRuleMatchStats 获取规则匹配统计
-func (r *RuleRepository) GetRuleMatchStats(ctx context.Context, ruleID int64, startTime, endTime time.Time) (*model.RuleMatchStat, error) {
-	stats := &model.RuleMatchStat{
-		RuleID:    ruleID,
-		StartTime: startTime,
-		EndTime:   endTime,
-		Timeline:  make([]*model.RuleMatchPoint, 0),
-	}
+		return nil
+	})
 
-	var points []*model.RuleMatchPoint
-	err := r.db.WithContext(ctx).Table("rule_match_stats").
-		Select("UNIX_TIMESTAMP(match_time) as timestamp, match_count as count").
-		Where("rule_id = ? AND match_time BETWEEN ? AND ?", ruleID, startTime, endTime).
-		Order("match_time ASC").
-		Find(&points).Error
 	if err != nil {
 		return nil, err
 	}
 
-	total := int64(0)
-	for _, point := range points {
-		total += point.Count
-	}
-
-	stats.Timeline = points
-	stats.Total = total
-
-	return stats, nil
+	return &stats, nil
 }
 
-// ImportRules 导入规则
+func (r *RuleRepository) GetRuleMatchStats(ctx context.Context, ruleID int64, startTime, endTime time.Time) (*model.RuleMatchStat, error) {
+	// 从缓存获取
+	key := fmt.Sprintf("rule_match_stats:%d:%d:%d", ruleID, startTime.Unix(), endTime.Unix())
+	var stat model.RuleMatchStat
+	if err := r.rdb.Get(ctx, key).Scan(&stat); err == nil {
+		return &stat, nil
+	}
+
+	// 从数据库获取
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&model.Rule{}).Where("id = ?", ruleID).Count(&total).Error; err != nil {
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取规则匹配统计失败: %v", err))
+	}
+
+	stat = model.RuleMatchStat{
+		RuleID:    ruleID,
+		StartTime: startTime,
+		EndTime:   endTime,
+		Total:     total,
+		Timeline:  make([]*model.RuleMatchPoint, 0),
+	}
+
+	// 缓存统计结果
+	if err := r.rdb.Set(ctx, key, &stat, time.Hour).Err(); err != nil {
+		return nil, errors.NewError(errors.ErrCache, fmt.Sprintf("缓存规则匹配统计失败: %v", err))
+	}
+
+	return &stat, nil
+}
+
 func (r *RuleRepository) ImportRules(ctx context.Context, rules []*model.Rule) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, rule := range rules {
@@ -374,27 +470,25 @@ func (r *RuleRepository) ImportRules(ctx context.Context, rules []*model.Rule) e
 				// 规则已存在，更新
 				rule.ID = existingRule.ID
 				if err := tx.Save(rule).Error; err != nil {
-					return err
+					return errors.NewError(errors.ErrSystem, fmt.Sprintf("更新规则失败: %v", err))
 				}
 			} else if err == gorm.ErrRecordNotFound {
 				// 规则不存在，创建
 				if err := tx.Create(rule).Error; err != nil {
-					return err
+					return errors.NewError(errors.ErrSystem, fmt.Sprintf("创建规则失败: %v", err))
 				}
 			} else {
-				return err
+				return errors.NewError(errors.ErrSystem, fmt.Sprintf("检查规则是否存在失败: %v", err))
 			}
 		}
 		return nil
 	})
 }
 
-// ExportRules 导出规则
 func (r *RuleRepository) ExportRules(ctx context.Context, query *repository.RuleQuery) ([]*model.Rule, error) {
 	var rules []*model.Rule
 	db := r.db.WithContext(ctx)
 
-	// 应用查询条件
 	if query.RuleType != "" {
 		db = db.Where("rule_type = ?", query.RuleType)
 	}
@@ -410,12 +504,11 @@ func (r *RuleRepository) ExportRules(ctx context.Context, query *repository.Rule
 
 	err := db.Find(&rules).Error
 	if err != nil {
-		return nil, err
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("导出规则失败: %v", err))
 	}
 	return rules, nil
 }
 
-// TestRule 测试规则
 func (r *RuleRepository) TestRule(ctx context.Context, rule *model.Rule, testCase *model.RuleTestCase) (*model.RuleTestResult, error) {
 	result := &model.RuleTestResult{
 		TestCase: testCase,
@@ -426,48 +519,34 @@ func (r *RuleRepository) TestRule(ctx context.Context, rule *model.Rule, testCas
 
 	// 根据规则类型执行不同的匹配逻辑
 	switch rule.Type {
-	case model.RuleTypeRegex:
-		// 正则匹配
-		re, err := regexp.Compile(rule.Pattern)
+	case model.RuleTypeSQLi:
+		detector := model.NewSQLInjectionDetector()
+		isInjection, err := detector.DetectInjection(testCase.Input)
 		if err != nil {
-			result.Error = fmt.Sprintf("正则表达式编译错误: %v", err)
+			result.Error = errors.NewError(errors.ErrRuleValidation, fmt.Sprintf("SQL注入检测失败: %v", err)).Error()
 			return result, nil
 		}
-		result.IsMatch = re.MatchString(testCase.Input)
-		if result.IsMatch {
-			result.MatchResult = &model.RuleMatch{
-				Rule:       rule,
-				MatchedStr: re.FindString(testCase.Input),
-				Position:   re.FindStringIndex(testCase.Input)[0],
-				Score:      1.0,
-			}
-		}
-
-	case model.RuleTypeSQLi:
-		// SQL注入检测
-		detector := model.NewSQLInjectionDetector()
-		isInjection, reason := detector.DetectInjection(testCase.Input)
 		result.IsMatch = isInjection
-		if result.IsMatch {
+		if isInjection {
 			result.MatchResult = &model.RuleMatch{
 				Rule:       rule,
 				MatchedStr: testCase.Input,
 				Position:   0,
 				Score:      1.0,
 			}
-			result.Error = reason
+			result.Error = errors.NewError(errors.ErrRuleValidation, "检测到SQL注入攻击").Error()
 		}
 
 	case model.RuleTypeXSS:
 		// XSS检测
 		err := model.ValidateXSSRule(rule)
 		if err != nil {
-			result.Error = fmt.Sprintf("XSS规则验证错误: %v", err)
+			result.Error = errors.NewError(errors.ErrRuleValidation, fmt.Sprintf("XSS规则验证失败: %v", err)).Error()
 			return result, nil
 		}
 		re, err := regexp.Compile(rule.Pattern)
 		if err != nil {
-			result.Error = fmt.Sprintf("XSS规则正则表达式编译错误: %v", err)
+			result.Error = errors.NewError(errors.ErrRuleValidation, fmt.Sprintf("XSS规则正则表达式编译错误: %v", err)).Error()
 			return result, nil
 		}
 		result.IsMatch = re.MatchString(testCase.Input)
@@ -481,8 +560,7 @@ func (r *RuleRepository) TestRule(ctx context.Context, rule *model.Rule, testCas
 		}
 
 	default:
-		result.Error = fmt.Sprintf("不支持的规则类型: %s", rule.Type)
-		return result, nil
+		return nil, errors.NewError(errors.ErrRuleValidation, fmt.Sprintf("不支持的规则类型: %s", rule.Type))
 	}
 
 	// 记录执行时间
@@ -491,46 +569,53 @@ func (r *RuleRepository) TestRule(ctx context.Context, rule *model.Rule, testCas
 	return result, nil
 }
 
-// ListRuleTestCases 列出规则测试用例
 func (r *RuleRepository) ListRuleTestCases(ctx context.Context, ruleID int64) ([]*model.RuleTestCase, error) {
 	var testCases []*model.RuleTestCase
 	err := r.db.WithContext(ctx).Where("rule_id = ?", ruleID).Find(&testCases).Error
 	if err != nil {
-		return nil, err
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取规则测试用例失败: %v", err))
 	}
 	return testCases, nil
 }
 
-// GetRuleAuditLogs 获取规则审计日志
 func (r *RuleRepository) GetRuleAuditLogs(ctx context.Context, ruleID int64) ([]*model.RuleAuditLog, error) {
 	var logs []*model.RuleAuditLog
 	err := r.db.WithContext(ctx).Where("rule_id = ?", ruleID).Order("created_at DESC").Find(&logs).Error
 	if err != nil {
-		return nil, err
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取规则审计日志失败: %v", err))
 	}
 	return logs, nil
 }
 
-// IncrRuleMatchCount 增加规则匹配计数
 func (r *RuleRepository) IncrRuleMatchCount(ctx context.Context, ruleID int64) error {
 	key := fmt.Sprintf("rule:match:count:%d", ruleID)
-	return r.rdb.Incr(ctx, key).Err()
+	if err := r.rdb.Incr(ctx, key).Err(); err != nil {
+		return errors.NewError(errors.ErrCache, fmt.Sprintf("增加规则匹配计数失败: %v", err))
+	}
+	return nil
 }
 
-// GetRuleMatchCount 获取规则匹配计数
 func (r *RuleRepository) GetRuleMatchCount(ctx context.Context, ruleID int64) (int64, error) {
 	key := fmt.Sprintf("rule:match:count:%d", ruleID)
-	return r.rdb.Get(ctx, key).Int64()
+	count, err := r.rdb.Get(ctx, key).Int64()
+	if err != nil {
+		if err == redis.Nil {
+			return 0, nil
+		}
+		return 0, errors.NewError(errors.ErrCache, fmt.Sprintf("获取规则匹配计数失败: %v", err))
+	}
+	return count, nil
 }
 
-// GetVersion 获取规则版本
 func (r *RuleRepository) GetVersion(ctx context.Context) (int64, error) {
 	var version int64
 	err := r.db.WithContext(ctx).Model(&model.Rule{}).Select("COALESCE(MAX(version), 0)").Scan(&version).Error
-	return version, err
+	if err != nil {
+		return 0, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取规则版本失败: %v", err))
+	}
+	return version, nil
 }
 
-// GormTransaction 包装 GORM 事务
 type GormTransaction struct {
 	tx *gorm.DB
 }
@@ -543,21 +628,26 @@ func (t *GormTransaction) Rollback() error {
 	return t.tx.Rollback().Error
 }
 
-// BeginTx 开启事务
 func (r *RuleRepository) BeginTx(ctx context.Context) (repository.Transaction, error) {
 	tx := r.db.Begin()
 	if tx.Error != nil {
-		return nil, tx.Error
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("开启事务失败: %v", tx.Error))
 	}
 	return &GormTransaction{tx: tx}, nil
 }
 
-// GetRuleByName 根据名称获取规则
 func (r *RuleRepository) GetRuleByName(ctx context.Context, name string) (*model.Rule, error) {
+	if name == "" {
+		return nil, errors.NewError(errors.ErrRuleValidation, "规则名称不能为空")
+	}
+
 	var rule model.Rule
-	err := r.db.Where("name = ?", name).First(&rule).Error
+	err := r.db.WithContext(ctx).Where("name = ?", name).First(&rule).Error
 	if err != nil {
-		return nil, err
+		if err == gorm.ErrRecordNotFound {
+			return nil, errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("规则不存在: %s", name))
+		}
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取规则失败: %v", err))
 	}
 	return &rule, nil
 }

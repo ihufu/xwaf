@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/model"
 	"github.com/xwaf/rule_engine/internal/repository"
 )
@@ -30,12 +31,12 @@ func (r *ruleVersionRepository) CreateVersion(ctx context.Context, version *mode
 		version.ChangeType, version.Status, version.CreatedBy,
 	)
 	if err != nil {
-		return fmt.Errorf("创建规则版本失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("创建规则版本失败: %v", err))
 	}
 
 	id, err := result.LastInsertId()
 	if err != nil {
-		return fmt.Errorf("获取规则版本ID失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("获取规则版本ID失败: %v", err))
 	}
 	version.ID = id
 
@@ -45,10 +46,8 @@ func (r *ruleVersionRepository) CreateVersion(ctx context.Context, version *mode
 // GetVersion 获取规则版本
 func (r *ruleVersionRepository) GetVersion(ctx context.Context, ruleID, version int64) (*model.RuleVersion, error) {
 	query := `
-		SELECT id, rule_id, version, hash, content, change_type, status,
-			created_by, created_at
-		FROM rule_versions
-		WHERE rule_id = ? AND version = ?
+		SELECT id, rule_id, version, hash, content, change_type, status, created_by, created_at
+		FROM rule_versions WHERE rule_id = ? AND version = ?
 	`
 	var v model.RuleVersion
 	err := r.db.QueryRowContext(ctx, query, ruleID, version).Scan(
@@ -56,27 +55,23 @@ func (r *ruleVersionRepository) GetVersion(ctx context.Context, ruleID, version 
 		&v.ChangeType, &v.Status, &v.CreatedBy, &v.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("规则版本不存在: rule_id=%d, version=%d", ruleID, version))
 	}
 	if err != nil {
-		return nil, fmt.Errorf("获取规则版本失败: %v", err)
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取规则版本失败: %v", err))
 	}
-
 	return &v, nil
 }
 
 // ListVersions 获取规则版本列表
 func (r *ruleVersionRepository) ListVersions(ctx context.Context, ruleID int64) ([]*model.RuleVersion, error) {
 	query := `
-		SELECT id, rule_id, version, hash, content, change_type, status,
-			created_by, created_at
-		FROM rule_versions
-		WHERE rule_id = ?
-		ORDER BY version DESC
+		SELECT id, rule_id, version, hash, content, change_type, status, created_by, created_at
+		FROM rule_versions WHERE rule_id = ? ORDER BY version DESC
 	`
 	rows, err := r.db.QueryContext(ctx, query, ruleID)
 	if err != nil {
-		return nil, fmt.Errorf("查询规则版本列表失败: %v", err)
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("查询规则版本列表失败: %v", err))
 	}
 	defer rows.Close()
 
@@ -88,34 +83,45 @@ func (r *ruleVersionRepository) ListVersions(ctx context.Context, ruleID int64) 
 			&v.ChangeType, &v.Status, &v.CreatedBy, &v.CreatedAt,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("扫描规则版本数据失败: %v", err)
+			return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("扫描规则版本数据失败: %v", err))
 		}
 		versions = append(versions, &v)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("遍历规则版本数据失败: %v", err)
+	if err = rows.Err(); err != nil {
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("遍历规则版本数据失败: %v", err))
 	}
 
 	return versions, nil
 }
 
+// GetLatestVersion 获取最新版本号
+func (r *ruleVersionRepository) GetLatestVersion(ctx context.Context) (int64, error) {
+	query := "SELECT COALESCE(MAX(version), 0) FROM rule_versions"
+	var version int64
+	err := r.db.QueryRowContext(ctx, query).Scan(&version)
+	if err != nil {
+		return 0, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取最新版本号失败: %v", err))
+	}
+	return version, nil
+}
+
 // CreateSyncLog 创建同步日志
 func (r *ruleVersionRepository) CreateSyncLog(ctx context.Context, log *model.RuleSyncLog) error {
 	query := `
-		INSERT INTO rule_sync_logs (rule_id, version, status, message, sync_type)
+		INSERT INTO rule_sync_logs (rule_id, version, status, message, created_by)
 		VALUES (?, ?, ?, ?, ?)
 	`
 	result, err := r.db.ExecContext(ctx, query,
-		log.RuleID, log.Version, log.Status, log.Message, log.SyncType,
+		log.RuleID, log.Version, log.Status, log.Message, log.CreatedBy,
 	)
 	if err != nil {
-		return fmt.Errorf("创建同步日志失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("创建同步日志失败: %v", err))
 	}
 
 	id, err := result.LastInsertId()
 	if err != nil {
-		return fmt.Errorf("获取同步日志ID失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("获取同步日志ID失败: %v", err))
 	}
 	log.ID = id
 
@@ -125,14 +131,12 @@ func (r *ruleVersionRepository) CreateSyncLog(ctx context.Context, log *model.Ru
 // ListSyncLogs 获取同步日志列表
 func (r *ruleVersionRepository) ListSyncLogs(ctx context.Context, ruleID int64) ([]*model.RuleSyncLog, error) {
 	query := `
-		SELECT id, rule_id, version, status, message, sync_type, created_at
-		FROM rule_sync_logs
-		WHERE rule_id = ?
-		ORDER BY created_at DESC
+		SELECT id, rule_id, version, status, message, created_by, created_at
+		FROM rule_sync_logs WHERE rule_id = ? ORDER BY created_at DESC
 	`
 	rows, err := r.db.QueryContext(ctx, query, ruleID)
 	if err != nil {
-		return nil, fmt.Errorf("查询同步日志列表失败: %v", err)
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("查询同步日志列表失败: %v", err))
 	}
 	defer rows.Close()
 
@@ -141,30 +145,19 @@ func (r *ruleVersionRepository) ListSyncLogs(ctx context.Context, ruleID int64) 
 		var log model.RuleSyncLog
 		err := rows.Scan(
 			&log.ID, &log.RuleID, &log.Version, &log.Status,
-			&log.Message, &log.SyncType, &log.CreatedAt,
+			&log.Message, &log.CreatedBy, &log.CreatedAt,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("扫描同步日志数据失败: %v", err)
+			return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("扫描同步日志数据失败: %v", err))
 		}
 		logs = append(logs, &log)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("遍历同步日志数据失败: %v", err)
+	if err = rows.Err(); err != nil {
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("遍历同步日志数据失败: %v", err))
 	}
 
 	return logs, nil
-}
-
-// GetLatestVersion 获取最新版本号
-func (r *ruleVersionRepository) GetLatestVersion(ctx context.Context) (int64, error) {
-	query := `SELECT COALESCE(MAX(version), 0) FROM rule_versions`
-	var version int64
-	err := r.db.QueryRowContext(ctx, query).Scan(&version)
-	if err != nil {
-		return 0, fmt.Errorf("获取最新版本号失败: %v", err)
-	}
-	return version, nil
 }
 
 // GetRulesByVersion 获取指定版本的规则列表

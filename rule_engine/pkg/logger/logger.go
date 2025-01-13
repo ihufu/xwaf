@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -29,7 +30,7 @@ func Init(cfg *LogConfig) error {
 	// 配置日志级别
 	level := zapcore.InfoLevel
 	if err := level.UnmarshalText([]byte(cfg.Level)); err != nil {
-		return fmt.Errorf("解析日志级别失败: %v", err)
+		return errors.NewError(errors.ErrInit, fmt.Sprintf("解析日志级别失败: %v", err))
 	}
 
 	// 配置日志输出

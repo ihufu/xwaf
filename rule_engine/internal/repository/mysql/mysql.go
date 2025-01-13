@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -54,12 +55,12 @@ func InitMySQL(config *Config) error {
 		SkipDefaultTransaction: true,
 	})
 	if err != nil {
-		return fmt.Errorf("连接数据库失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("连接数据库失败: %v", err))
 	}
 
 	sqlDB, err := DB.DB()
 	if err != nil {
-		return fmt.Errorf("获取数据库实例失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("获取数据库实例失败: %v", err))
 	}
 
 	// 设置连接池
@@ -70,7 +71,7 @@ func InitMySQL(config *Config) error {
 
 	// 测试连接
 	if err = sqlDB.Ping(); err != nil {
-		return fmt.Errorf("数据库连接测试失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("数据库连接测试失败: %v", err))
 	}
 
 	return nil

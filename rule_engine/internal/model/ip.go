@@ -1,6 +1,12 @@
 package model
 
-import "time"
+import (
+	"fmt"
+	"net"
+	"time"
+
+	"github.com/xwaf/rule_engine/internal/errors"
+)
 
 // IPListType IP 名单类型
 type IPListType string
@@ -43,6 +49,39 @@ type IPRuleQuery struct {
 
 // Validate 验证 IP 规则
 func (r *IPRule) Validate() error {
-	// TODO: 实现 IP 规则验证
+	// 验证IP地址
+	if r.IP == "" {
+		return errors.NewError(errors.ErrRuleValidation, "IP地址不能为空")
+	}
+	if ip := net.ParseIP(r.IP); ip == nil {
+		return errors.NewError(errors.ErrRuleValidation, fmt.Sprintf("无效的IP地址: %s", r.IP))
+	}
+
+	// 验证IP类型
+	switch r.IPType {
+	case IPListTypeWhite, IPListTypeBlack:
+		// 合法的IP类型
+	default:
+		return errors.NewError(errors.ErrRuleValidation, fmt.Sprintf("无效的IP类型: %s", r.IPType))
+	}
+
+	// 验证封禁类型
+	switch r.BlockType {
+	case BlockTypePermanent, BlockTypeTemporary:
+		// 合法的封禁类型
+	default:
+		return errors.NewError(errors.ErrRuleValidation, fmt.Sprintf("无效的封禁类型: %s", r.BlockType))
+	}
+
+	// 如果是临时封禁，验证过期时间
+	if r.BlockType == BlockTypeTemporary {
+		if r.ExpireTime.IsZero() {
+			return errors.NewError(errors.ErrRuleValidation, "临时封禁必须设置过期时间")
+		}
+		if r.ExpireTime.Before(time.Now()) {
+			return errors.NewError(errors.ErrRuleValidation, "过期时间不能早于当前时间")
+		}
+	}
+
 	return nil
 }

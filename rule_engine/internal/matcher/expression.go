@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/model"
 )
 
@@ -45,13 +46,17 @@ func NewExpressionMatcher(matchers map[string]Matcher) *ExpressionMatcher {
 
 // Add 添加规则表达式
 func (m *ExpressionMatcher) Add(rule *model.Rule) error {
+	if rule == nil {
+		return errors.NewError(errors.ErrRuleMatch, "规则不能为空")
+	}
+
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
 	// 解析规则组合操作
 	expr, err := m.parseRuleOperation(rule)
 	if err != nil {
-		return err
+		return errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("解析规则操作失败: %v", err))
 	}
 
 	// 添加到表达式列表
@@ -60,7 +65,7 @@ func (m *ExpressionMatcher) Add(rule *model.Rule) error {
 	// 将规则添加到对应的基础匹配器
 	for _, matcher := range m.matchers {
 		if err := matcher.Add(rule); err != nil {
-			return err
+			return errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("添加规则到基础匹配器失败: %v", err))
 		}
 	}
 
@@ -104,13 +109,25 @@ func (m *ExpressionMatcher) parseRuleOperation(rule *model.Rule) (Expression, er
 
 // Match 执行表达式匹配
 func (m *ExpressionMatcher) Match(ctx context.Context, req *model.CheckRequest) ([]*model.RuleMatch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("上下文已取消: %v", err))
+	}
+
+	if req == nil {
+		return nil, errors.NewError(errors.ErrRuleMatch, "请求参数不能为空")
+	}
+
+	if req.URI == "" {
+		return nil, errors.NewError(errors.ErrRuleMatch, "请求URI不能为空")
+	}
+
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 
 	var matches []*model.RuleMatch
 	for _, expr := range m.expressions {
 		if matched, match, err := m.evaluateExpression(ctx, expr, req); err != nil {
-			return nil, err
+			return nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("评估表达式失败: %v", err))
 		} else if matched && match != nil {
 			matches = append(matches, match)
 		}
@@ -121,12 +138,16 @@ func (m *ExpressionMatcher) Match(ctx context.Context, req *model.CheckRequest) 
 
 // evaluateExpression 评估表达式
 func (m *ExpressionMatcher) evaluateExpression(ctx context.Context, expr Expression, req *model.CheckRequest) (bool, *model.RuleMatch, error) {
+	if err := ctx.Err(); err != nil {
+		return false, nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("上下文已取消: %v", err))
+	}
+
 	switch expr.Type {
 	case ExprTypeRule:
 		// 使用基础匹配器进行匹配
 		for _, matcher := range m.matchers {
 			if matches, err := matcher.Match(ctx, req); err != nil {
-				return false, nil, err
+				return false, nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("基础匹配器匹配失败: %v", err))
 			} else if len(matches) > 0 {
 				return true, matches[0], nil
 			}
@@ -136,7 +157,7 @@ func (m *ExpressionMatcher) evaluateExpression(ctx context.Context, expr Express
 	case ExprTypeAnd:
 		for _, child := range expr.Children {
 			if matched, _, err := m.evaluateExpression(ctx, child, req); err != nil {
-				return false, nil, err
+				return false, nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("AND表达式评估失败: %v", err))
 			} else if !matched {
 				return false, nil, nil
 			}
@@ -146,7 +167,7 @@ func (m *ExpressionMatcher) evaluateExpression(ctx context.Context, expr Express
 	case ExprTypeOr:
 		for _, child := range expr.Children {
 			if matched, match, err := m.evaluateExpression(ctx, child, req); err != nil {
-				return false, nil, err
+				return false, nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("OR表达式评估失败: %v", err))
 			} else if matched {
 				return true, match, nil
 			}
@@ -156,7 +177,7 @@ func (m *ExpressionMatcher) evaluateExpression(ctx context.Context, expr Express
 	case ExprTypeNot:
 		matched, _, err := m.evaluateExpression(ctx, expr.Children[0], req)
 		if err != nil {
-			return false, nil, err
+			return false, nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("NOT表达式评估失败: %v", err))
 		}
 		return !matched, &model.RuleMatch{Rule: expr.Rule}, nil
 
@@ -164,7 +185,7 @@ func (m *ExpressionMatcher) evaluateExpression(ctx context.Context, expr Express
 		matchCount := 0
 		for _, child := range expr.Children {
 			if matched, _, err := m.evaluateExpression(ctx, child, req); err != nil {
-				return false, nil, err
+				return false, nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("ANY表达式评估失败: %v", err))
 			} else if matched {
 				matchCount++
 				if matchCount >= expr.Threshold {
@@ -178,7 +199,7 @@ func (m *ExpressionMatcher) evaluateExpression(ctx context.Context, expr Express
 		matchCount := 0
 		for _, child := range expr.Children {
 			if matched, _, err := m.evaluateExpression(ctx, child, req); err != nil {
-				return false, nil, err
+				return false, nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("ALL表达式评估失败: %v", err))
 			} else if matched {
 				matchCount++
 			}
@@ -186,14 +207,31 @@ func (m *ExpressionMatcher) evaluateExpression(ctx context.Context, expr Express
 		return matchCount >= expr.Threshold, &model.RuleMatch{Rule: expr.Rule}, nil
 
 	default:
-		return false, nil, fmt.Errorf("未知的表达式类型: %v", expr.Type)
+		return false, nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("未知的表达式类型: %v", expr.Type))
 	}
 }
 
 // Remove 移除规则
 func (m *ExpressionMatcher) Remove(ruleID int64) error {
+	if ruleID <= 0 {
+		return errors.NewError(errors.ErrRuleMatch, "无效的规则ID")
+	}
+
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
+
+	// 检查规则是否存在
+	exists := false
+	for _, expr := range m.expressions {
+		if expr.Rule.ID == ruleID {
+			exists = true
+			break
+		}
+	}
+
+	if !exists {
+		return errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("规则不存在: %d", ruleID))
+	}
 
 	// 从表达式列表中移除
 	newExpressions := make([]Expression, 0)
@@ -207,7 +245,7 @@ func (m *ExpressionMatcher) Remove(ruleID int64) error {
 	// 从基础匹配器中移除
 	for _, matcher := range m.matchers {
 		if err := matcher.Remove(ruleID); err != nil {
-			return err
+			return errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("从基础匹配器移除规则失败: %v", err))
 		}
 	}
 
@@ -222,7 +260,7 @@ func (m *ExpressionMatcher) Clear() error {
 	m.expressions = make([]Expression, 0)
 	for _, matcher := range m.matchers {
 		if err := matcher.Clear(); err != nil {
-			return err
+			return errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("清空基础匹配器失败: %v", err))
 		}
 	}
 	return nil

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/model"
 	"github.com/xwaf/rule_engine/internal/repository"
 	"github.com/xwaf/rule_engine/pkg/logger"
@@ -44,6 +45,10 @@ func NewWAFConfigService(configRepo repository.WAFConfigRepository, cacheRepo re
 
 // GetConfig 获取WAF配置
 func (s *wafConfigService) GetConfig(ctx context.Context) (*model.WAFConfig, error) {
+	if ctx == nil {
+		return nil, errors.NewError(errors.ErrConfig, "上下文不能为空")
+	}
+
 	// 从缓存获取
 	config, err := s.getConfigFromCache(ctx)
 	if err == nil && config != nil {
@@ -53,7 +58,7 @@ func (s *wafConfigService) GetConfig(ctx context.Context) (*model.WAFConfig, err
 	// 从数据库获取
 	config, err = s.configRepo.GetConfig(ctx)
 	if err != nil {
-		return nil, err
+		return nil, errors.NewError(errors.ErrConfig, fmt.Sprintf("获取WAF配置失败: %v", err))
 	}
 
 	// 更新缓存
@@ -68,14 +73,21 @@ func (s *wafConfigService) GetConfig(ctx context.Context) (*model.WAFConfig, err
 
 // UpdateConfig 更新WAF配置
 func (s *wafConfigService) UpdateConfig(ctx context.Context, config *model.WAFConfig) error {
+	if ctx == nil {
+		return errors.NewError(errors.ErrConfig, "上下文不能为空")
+	}
+	if config == nil {
+		return errors.NewError(errors.ErrConfig, "配置不能为空")
+	}
+
 	// 验证配置
 	if err := config.Validate(); err != nil {
-		return fmt.Errorf("配置验证失败: %v", err)
+		return errors.NewError(errors.ErrConfig, fmt.Sprintf("配置验证失败: %v", err))
 	}
 
 	// 更新配置
 	if err := s.configRepo.UpdateConfig(ctx, config); err != nil {
-		return err
+		return errors.NewError(errors.ErrConfig, fmt.Sprintf("更新WAF配置失败: %v", err))
 	}
 
 	// 更新缓存
@@ -84,6 +96,10 @@ func (s *wafConfigService) UpdateConfig(ctx context.Context, config *model.WAFCo
 
 // GetMode 获取WAF运行模式
 func (s *wafConfigService) GetMode(ctx context.Context) (model.WAFMode, error) {
+	if ctx == nil {
+		return "", errors.NewError(errors.ErrConfig, "上下文不能为空")
+	}
+
 	// 从缓存获取
 	mode, err := s.getModeFromCache(ctx)
 	if err == nil {
@@ -93,7 +109,7 @@ func (s *wafConfigService) GetMode(ctx context.Context) (model.WAFMode, error) {
 	// 从数据库获取
 	config, err := s.GetConfig(ctx)
 	if err != nil {
-		return "", err
+		return "", errors.NewError(errors.ErrConfig, fmt.Sprintf("获取WAF配置失败: %v", err))
 	}
 	if config == nil {
 		return model.WAFModeBlock, nil // 默认为阻断模式
@@ -104,36 +120,78 @@ func (s *wafConfigService) GetMode(ctx context.Context) (model.WAFMode, error) {
 
 // 缓存相关的辅助方法
 func (s *wafConfigService) updateConfigCache(ctx context.Context, config *model.WAFConfig) error {
+	if ctx == nil {
+		return errors.NewError(errors.ErrCache, "上下文不能为空")
+	}
+	if config == nil {
+		return errors.NewError(errors.ErrCache, "配置不能为空")
+	}
+
 	key := "waf:config"
-	return s.cacheRepo.Set(ctx, key, config, 24*time.Hour)
+	if err := s.cacheRepo.Set(ctx, key, config, 24*time.Hour); err != nil {
+		return errors.NewError(errors.ErrCache, fmt.Sprintf("设置WAF配置缓存失败: %v", err))
+	}
+	return nil
 }
 
 func (s *wafConfigService) getConfigFromCache(ctx context.Context) (*model.WAFConfig, error) {
+	if ctx == nil {
+		return nil, errors.NewError(errors.ErrCache, "上下文不能为空")
+	}
+
 	key := "waf:config"
 	var config model.WAFConfig
 	err := s.cacheRepo.Get(ctx, key, &config)
 	if err != nil {
-		return nil, err
+		return nil, errors.NewError(errors.ErrCache, fmt.Sprintf("获取WAF配置缓存失败: %v", err))
 	}
 	return &config, nil
 }
 
 func (s *wafConfigService) getModeFromCache(ctx context.Context) (model.WAFMode, error) {
+	if ctx == nil {
+		return "", errors.NewError(errors.ErrCache, "上下文不能为空")
+	}
+
 	key := "waf:mode"
 	var mode model.WAFMode
 	err := s.cacheRepo.Get(ctx, key, &mode)
 	if err != nil {
-		return "", err
+		return "", errors.NewError(errors.ErrCache, fmt.Sprintf("获取WAF模式缓存失败: %v", err))
 	}
 	return mode, nil
 }
 
 // LogModeChange 记录模式变更日志
 func (s *wafConfigService) LogModeChange(ctx context.Context, log *model.WAFModeChangeLog) error {
-	return s.configRepo.LogModeChange(ctx, log)
+	if ctx == nil {
+		return errors.NewError(errors.ErrConfig, "上下文不能为空")
+	}
+	if log == nil {
+		return errors.NewError(errors.ErrConfig, "日志不能为空")
+	}
+
+	if err := s.configRepo.LogModeChange(ctx, log); err != nil {
+		return errors.NewError(errors.ErrConfig, fmt.Sprintf("记录WAF模式变更日志失败: %v", err))
+	}
+	return nil
 }
 
 // GetModeChangeLogs 获取模式变更日志
 func (s *wafConfigService) GetModeChangeLogs(ctx context.Context, startTime, endTime int64, page, pageSize int) ([]*model.WAFModeChangeLog, int64, error) {
-	return s.configRepo.GetModeChangeLogs(ctx, startTime, endTime, page, pageSize)
+	if ctx == nil {
+		return nil, 0, errors.NewError(errors.ErrConfig, "上下文不能为空")
+	}
+	if startTime > endTime {
+		return nil, 0, errors.NewError(errors.ErrConfig, "开始时间不能大于结束时间")
+	}
+	if page <= 0 || pageSize <= 0 {
+		return nil, 0, errors.NewError(errors.ErrConfig, "分页参数必须大于0")
+	}
+
+	logs, total, err := s.configRepo.GetModeChangeLogs(ctx, startTime, endTime, page, pageSize)
+	if err != nil {
+		return nil, 0, errors.NewError(errors.ErrConfig, fmt.Sprintf("获取WAF模式变更日志失败: %v", err))
+	}
+	return logs, total, nil
 }

@@ -5,6 +5,7 @@
 # 忽略特定目录
 old_rule_engine/
 logs/
+error_fixes.md
 
 # 编译输出
 bin/
@@ -15,7 +16,6 @@ bin/
 *.log
 
 # 系统文件
-.DS_Store
 Thumbs.db
 
 # 依赖目录

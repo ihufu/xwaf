@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/xwaf/rule_engine/internal/errors"
 )
 
 // RuleVariable 规则变量类型
@@ -162,10 +164,10 @@ type Rule struct {
 // ValidateXSSRule 验证XSS规则
 func ValidateXSSRule(rule *Rule) error {
 	if rule.Type != RuleTypeXSS {
-		return fmt.Errorf("rule type must be XSS")
+		return errors.NewError(errors.ErrRuleValidation, "规则类型必须是XSS")
 	}
 	if rule.Pattern == "" {
-		return fmt.Errorf("pattern cannot be empty")
+		return errors.NewError(errors.ErrRuleValidation, "规则匹配模式不能为空")
 	}
 	return nil
 }
@@ -173,19 +175,19 @@ func ValidateXSSRule(rule *Rule) error {
 // Validate 验证规则的合法性
 func (r *Rule) Validate() error {
 	if r.Name == "" {
-		return fmt.Errorf("规则名称不能为空")
+		return errors.NewError(errors.ErrRuleValidation, "规则名称不能为空")
 	}
 	if r.Pattern == "" {
-		return fmt.Errorf("规则匹配模式不能为空")
+		return errors.NewError(errors.ErrRuleValidation, "规则匹配模式不能为空")
 	}
 	if r.Type == "" {
-		return fmt.Errorf("规则类型不能为空")
+		return errors.NewError(errors.ErrRuleValidation, "规则类型不能为空")
 	}
 	if r.Action == "" {
-		return fmt.Errorf("规则动作不能为空")
+		return errors.NewError(errors.ErrRuleValidation, "规则动作不能为空")
 	}
 	if r.Status == "" {
-		return fmt.Errorf("规则状态不能为空")
+		return errors.NewError(errors.ErrRuleValidation, "规则状态不能为空")
 	}
 
 	// 验证规则类型的合法性
@@ -193,7 +195,7 @@ func (r *Rule) Validate() error {
 	case RuleTypeIP, RuleTypeCC, RuleTypeRegex, RuleTypeSQLi, RuleTypeXSS, RuleTypeCustom:
 		// 合法的规则类型
 	default:
-		return fmt.Errorf("无效的规则类型: %s", r.Type)
+		return errors.NewError(errors.ErrRuleValidation, fmt.Sprintf("无效的规则类型: %s", r.Type))
 	}
 
 	// 验证动作类型的合法性
@@ -201,7 +203,7 @@ func (r *Rule) Validate() error {
 	case ActionBlock, ActionAllow, ActionLog, ActionRedirect, ActionCaptcha:
 		// 合法的动作类型
 	default:
-		return fmt.Errorf("无效的动作类型: %s", r.Action)
+		return errors.NewError(errors.ErrRuleValidation, fmt.Sprintf("无效的动作类型: %s", r.Action))
 	}
 
 	return nil

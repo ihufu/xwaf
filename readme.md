@@ -1,4 +1,4 @@
-# XWAF 使用说明
+# XWAF 使用说明 - 基于cursor（claude-3.5-sonnet-20241022）开发
 
 ## 简介
 XWAF 是一个基于 OpenResty 的 Web 应用防火墙，它可以帮助你保护你的 Web 应用免受各种网络攻击。
@@ -351,10 +351,10 @@ rule_engine:
    # 克隆项目
    git clone <项目地址>
    cd xwaf
-
+   
    # 构建镜像
    docker-compose build waf
-
+   
    # 启动服务
    docker-compose up -d
    ```

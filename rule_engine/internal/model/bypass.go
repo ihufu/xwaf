@@ -5,6 +5,8 @@ import (
 	"net"
 	"regexp"
 	"time"
+
+	"github.com/xwaf/rule_engine/internal/errors"
 )
 
 // BypassMode 旁路模式类型
@@ -42,6 +44,10 @@ type BypassAttempt struct {
 
 // ValidateBypassConfig 验证旁路配置
 func ValidateBypassConfig(config *BypassConfig) error {
+	if config == nil {
+		return errors.NewError(errors.ErrValidation, "旁路配置不能为空")
+	}
+
 	// 验证旁路模式
 	validModes := map[BypassMode]bool{
 		BypassModeNone:     true,
@@ -50,32 +56,32 @@ func ValidateBypassConfig(config *BypassConfig) error {
 		BypassModeComplete: true,
 	}
 	if !validModes[config.Mode] {
-		return fmt.Errorf("无效的旁路模式: %s", config.Mode)
+		return errors.NewError(errors.ErrValidation, fmt.Sprintf("无效的旁路模式: %s", config.Mode))
 	}
 
 	// 验证时间范围
 	if config.StartTime > 0 && config.EndTime > 0 && config.StartTime >= config.EndTime {
-		return fmt.Errorf("旁路开始时间必须早于结束时间")
+		return errors.NewError(errors.ErrValidation, "旁路开始时间必须早于结束时间")
 	}
 
 	// 验证IP列表
 	for _, ip := range config.IPs {
 		if net.ParseIP(ip) == nil {
-			return fmt.Errorf("无效的IP地址: %s", ip)
+			return errors.NewError(errors.ErrValidation, fmt.Sprintf("无效的IP地址: %s", ip))
 		}
 	}
 
 	// 验证URL列表
 	for _, url := range config.URLs {
 		if _, err := regexp.Compile(url); err != nil {
-			return fmt.Errorf("无效的URL模式: %s", url)
+			return errors.NewError(errors.ErrValidation, fmt.Sprintf("无效的URL模式: %s, 错误: %v", url, err))
 		}
 	}
 
 	// 验证Header列表
 	for _, header := range config.Headers {
 		if !regexp.MustCompile(`^[a-zA-Z0-9-]+$`).MatchString(header) {
-			return fmt.Errorf("无效的Header名称: %s", header)
+			return errors.NewError(errors.ErrValidation, fmt.Sprintf("无效的Header名称: %s", header))
 		}
 	}
 
@@ -83,45 +89,57 @@ func ValidateBypassConfig(config *BypassConfig) error {
 }
 
 // IsBypassAllowed 检查是否允许旁路
-func IsBypassAllowed(config *BypassConfig, req *CheckRequest) bool {
+func IsBypassAllowed(config *BypassConfig, req *CheckRequest) (bool, error) {
+	if config == nil {
+		return false, errors.NewError(errors.ErrValidation, "旁路配置不能为空")
+	}
+
+	if req == nil {
+		return false, errors.NewError(errors.ErrValidation, "请求参数不能为空")
+	}
+
 	// 检查旁路模式
 	if config.Mode == BypassModeNone {
-		return false
+		return false, nil
 	}
 
 	// 检查时间范围
 	now := time.Now().Unix()
 	if config.StartTime > 0 && config.EndTime > 0 {
 		if now < config.StartTime || now > config.EndTime {
-			return false
+			return false, nil
 		}
 	}
 
 	// 完全旁路模式
 	if config.Mode == BypassModeComplete {
-		return true
+		return true, nil
 	}
 
 	// 检查IP
 	for _, ip := range config.IPs {
 		if req.ClientIP == ip {
-			return true
+			return true, nil
 		}
 	}
 
 	// 检查URL
 	for _, urlPattern := range config.URLs {
-		if matched, _ := regexp.MatchString(urlPattern, req.URI); matched {
-			return true
+		matched, err := regexp.MatchString(urlPattern, req.URI)
+		if err != nil {
+			return false, errors.NewError(errors.ErrValidation, fmt.Sprintf("URL模式匹配失败: %v", err))
+		}
+		if matched {
+			return true, nil
 		}
 	}
 
 	// 检查Headers
 	for _, header := range config.Headers {
 		if _, exists := req.Headers[header]; exists {
-			return true
+			return true, nil
 		}
 	}
 
-	return false
+	return false, nil
 }

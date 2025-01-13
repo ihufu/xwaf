@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/model"
 )
 
@@ -38,7 +39,7 @@ func NewDefaultRuleFactory() RuleFactory {
 func (f *defaultRuleFactory) CreateRuleHandler(ruleType model.RuleType) (RuleHandler, error) {
 	handler, ok := f.handlers[ruleType]
 	if !ok {
-		return nil, fmt.Errorf("unsupported rule type: %s", ruleType)
+		return nil, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("不支持的规则类型: %s", ruleType))
 	}
 	return handler, nil
 }
@@ -49,6 +50,16 @@ type ipRuleHandler struct {
 }
 
 func (h *ipRuleHandler) Match(ctx context.Context, rule *model.Rule, req *model.CheckRequest) (bool, error) {
+	if ctx == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "上下文不能为空")
+	}
+	if rule == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "规则不能为空")
+	}
+	if req == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "请求不能为空")
+	}
+
 	// 从缓存中获取正则表达式
 	cached, ok := h.regexCache.Load(rule.ID)
 	var re *regexp.Regexp
@@ -58,7 +69,7 @@ func (h *ipRuleHandler) Match(ctx context.Context, rule *model.Rule, req *model.
 		// 如果缓存中没有，则编译并存储
 		re, err = regexp.Compile(rule.Pattern)
 		if err != nil {
-			return false, fmt.Errorf("编译IP规则正则表达式失败: %v", err)
+			return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("编译IP规则正则表达式失败: %v", err))
 		}
 		h.regexCache.Store(rule.ID, re)
 	} else {
@@ -81,6 +92,16 @@ func NewCCRuleHandler(rdb redis.UniversalClient) *ccRuleHandler {
 }
 
 func (h *ccRuleHandler) Match(ctx context.Context, rule *model.Rule, req *model.CheckRequest) (bool, error) {
+	if ctx == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "上下文不能为空")
+	}
+	if rule == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "规则不能为空")
+	}
+	if req == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "请求不能为空")
+	}
+
 	// 解析规则参数
 	var params struct {
 		Window  int64 `json:"window"`  // 时间窗口（秒）
@@ -88,12 +109,12 @@ func (h *ccRuleHandler) Match(ctx context.Context, rule *model.Rule, req *model.
 	}
 
 	if err := json.Unmarshal([]byte(rule.Params), &params); err != nil {
-		return false, fmt.Errorf("解析CC规则参数失败: %v", err)
+		return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("解析CC规则参数失败: %v", err))
 	}
 
 	// 验证参数
 	if params.Window <= 0 || params.MaxReqs <= 0 {
-		return false, fmt.Errorf("无效的CC规则参数: window=%d, maxReqs=%d", params.Window, params.MaxReqs)
+		return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("无效的CC规则参数: window=%d, maxReqs=%d", params.Window, params.MaxReqs))
 	}
 
 	// 构造Redis键
@@ -110,7 +131,7 @@ func (h *ccRuleHandler) Match(ctx context.Context, rule *model.Rule, req *model.
 	// 执行命令
 	_, err := pipe.Exec(ctx)
 	if err != nil {
-		return false, fmt.Errorf("redis操作失败: %v", err)
+		return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("redis操作失败: %v", err))
 	}
 
 	// 获取当前计数
@@ -126,6 +147,16 @@ type regexRuleHandler struct {
 }
 
 func (h *regexRuleHandler) Match(ctx context.Context, rule *model.Rule, req *model.CheckRequest) (bool, error) {
+	if ctx == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "上下文不能为空")
+	}
+	if rule == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "规则不能为空")
+	}
+	if req == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "请求不能为空")
+	}
+
 	// 从缓存中获取正则表达式
 	cached, ok := h.regexCache.Load(rule.ID)
 	var re *regexp.Regexp
@@ -135,7 +166,7 @@ func (h *regexRuleHandler) Match(ctx context.Context, rule *model.Rule, req *mod
 		// 如果缓存中没有，则编译并存储
 		re, err = regexp.Compile(rule.Pattern)
 		if err != nil {
-			return false, fmt.Errorf("编译正则表达式失败: %v", err)
+			return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("编译正则表达式失败: %v", err))
 		}
 		h.regexCache.Store(rule.ID, re)
 	} else {
@@ -160,6 +191,8 @@ func (h *regexRuleHandler) Match(ctx context.Context, rule *model.Rule, req *mod
 		}
 	case model.RuleVarRequestBody:
 		return re.MatchString(req.Body), nil
+	default:
+		return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("不支持的规则变量类型: %s", rule.RuleVariable))
 	}
 
 	return false, nil
@@ -169,23 +202,41 @@ func (h *regexRuleHandler) Match(ctx context.Context, rule *model.Rule, req *mod
 type sqlInjectionRuleHandler struct{}
 
 func (h *sqlInjectionRuleHandler) Match(ctx context.Context, rule *model.Rule, req *model.CheckRequest) (bool, error) {
+	if ctx == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "上下文不能为空")
+	}
+	if rule == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "规则不能为空")
+	}
+	if req == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "请求不能为空")
+	}
+
 	detector := model.NewSQLInjectionDetector()
 
 	switch rule.RuleVariable {
 	case model.RuleVarRequestURI:
-		if isInjection, _ := detector.DetectInjection(req.URI); isInjection {
+		if isInjection, err := detector.DetectInjection(req.URI); err != nil {
+			return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("检测SQL注入失败: %v", err))
+		} else if isInjection {
 			return true, nil
 		}
 	case model.RuleVarRequestArgs:
 		for _, v := range req.Args {
-			if isInjection, _ := detector.DetectInjection(v); isInjection {
+			if isInjection, err := detector.DetectInjection(v); err != nil {
+				return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("检测SQL注入失败: %v", err))
+			} else if isInjection {
 				return true, nil
 			}
 		}
 	case model.RuleVarRequestBody:
-		if isInjection, _ := detector.DetectInjection(req.Body); isInjection {
+		if isInjection, err := detector.DetectInjection(req.Body); err != nil {
+			return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("检测SQL注入失败: %v", err))
+		} else if isInjection {
 			return true, nil
 		}
+	default:
+		return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("不支持的规则变量类型: %s", rule.RuleVariable))
 	}
 
 	return false, nil
@@ -195,6 +246,16 @@ func (h *sqlInjectionRuleHandler) Match(ctx context.Context, rule *model.Rule, r
 type xssRuleHandler struct{}
 
 func (h *xssRuleHandler) Match(ctx context.Context, rule *model.Rule, req *model.CheckRequest) (bool, error) {
+	if ctx == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "上下文不能为空")
+	}
+	if rule == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "规则不能为空")
+	}
+	if req == nil {
+		return false, errors.NewError(errors.ErrRuleEngine, "请求不能为空")
+	}
+
 	// 根据规则变量类型检查不同的请求部分
 	switch rule.RuleVariable {
 	case model.RuleVarRequestURI:
@@ -211,6 +272,8 @@ func (h *xssRuleHandler) Match(ctx context.Context, rule *model.Rule, req *model
 		if containsXSS(req.Body) {
 			return true, nil
 		}
+	default:
+		return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("不支持的规则变量类型: %s", rule.RuleVariable))
 	}
 
 	return false, nil

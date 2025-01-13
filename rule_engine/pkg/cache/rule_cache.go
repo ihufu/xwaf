@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/patrickmn/go-cache"
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/pkg/metrics"
 )
 
@@ -47,7 +48,7 @@ func (c *LocalCache) Get(_ context.Context, key string) (interface{}, error) {
 		return value, nil
 	}
 	metrics.CacheMisses.WithLabelValues("local").Inc()
-	return nil, fmt.Errorf("key not found: %s", key)
+	return nil, errors.NewError(errors.ErrCacheMiss, fmt.Sprintf("key not found: %s", key))
 }
 
 func (c *LocalCache) Set(_ context.Context, key string, value interface{}, expiration time.Duration) error {
@@ -102,15 +103,15 @@ func (c *RedisCache) Get(ctx context.Context, key string) (interface{}, error) {
 	if err != nil {
 		if err == redis.Nil {
 			metrics.CacheMisses.WithLabelValues("redis").Inc()
-			return nil, fmt.Errorf("key not found: %s", key)
+			return nil, errors.NewError(errors.ErrCacheMiss, fmt.Sprintf("key not found: %s", key))
 		}
-		return nil, err
+		return nil, errors.NewError(errors.ErrCache, err)
 	}
 
 	metrics.CacheHits.WithLabelValues("redis").Inc()
 	var result interface{}
 	if err := json.Unmarshal([]byte(value), &result); err != nil {
-		return nil, err
+		return nil, errors.NewError(errors.ErrCacheInvalid, err)
 	}
 	return result, nil
 }
@@ -123,9 +124,12 @@ func (c *RedisCache) Set(ctx context.Context, key string, value interface{}, exp
 
 	data, err := json.Marshal(value)
 	if err != nil {
-		return err
+		return errors.NewError(errors.ErrCacheInvalid, err)
 	}
-	return c.client.Set(ctx, key, data, expiration).Err()
+	if err := c.client.Set(ctx, key, data, expiration).Err(); err != nil {
+		return errors.NewError(errors.ErrCache, err)
+	}
+	return nil
 }
 
 func (c *RedisCache) Delete(ctx context.Context, key string) error {
@@ -134,7 +138,10 @@ func (c *RedisCache) Delete(ctx context.Context, key string) error {
 		metrics.CacheLatency.WithLabelValues("delete", "redis").Observe(time.Since(start).Seconds())
 	}()
 
-	return c.client.Del(ctx, key).Err()
+	if err := c.client.Del(ctx, key).Err(); err != nil {
+		return errors.NewError(errors.ErrCache, err)
+	}
+	return nil
 }
 
 func (c *RedisCache) Clear(ctx context.Context) error {
@@ -143,7 +150,10 @@ func (c *RedisCache) Clear(ctx context.Context) error {
 		metrics.CacheLatency.WithLabelValues("clear", "redis").Observe(time.Since(start).Seconds())
 	}()
 
-	return c.client.FlushDB(ctx).Err()
+	if err := c.client.FlushDB(ctx).Err(); err != nil {
+		return errors.NewError(errors.ErrCache, err)
+	}
+	return nil
 }
 
 // TwoLevelCache 两级缓存
@@ -186,12 +196,12 @@ func (c *TwoLevelCache) Get(ctx context.Context, key string) (interface{}, error
 	value, err := c.redis.Get(ctx, c.getKey(key))
 	if err != nil {
 		metrics.CacheMisses.WithLabelValues("two_level").Inc()
-		return nil, err
+		return nil, errors.NewError(errors.ErrCache, err)
 	}
 
 	// 将Redis中的数据写入本地缓存
 	if err := c.local.Set(ctx, key, value, time.Minute*5); err != nil {
-		return nil, err
+		return nil, errors.NewError(errors.ErrCache, err)
 	}
 
 	metrics.CacheHits.WithLabelValues("two_level").Inc()
@@ -209,10 +219,13 @@ func (c *TwoLevelCache) Set(ctx context.Context, key string, value interface{}, 
 
 	// 同时写入本地缓存和Redis
 	if err := c.local.Set(ctx, key, value, expiration); err != nil {
-		return err
+		return errors.NewError(errors.ErrCache, err)
 	}
 
-	return c.redis.Set(ctx, c.getKey(key), value, expiration)
+	if err := c.redis.Set(ctx, c.getKey(key), value, expiration); err != nil {
+		return errors.NewError(errors.ErrCache, err)
+	}
+	return nil
 }
 
 func (c *TwoLevelCache) Delete(ctx context.Context, key string) error {
@@ -226,10 +239,13 @@ func (c *TwoLevelCache) Delete(ctx context.Context, key string) error {
 
 	// 同时删除本地缓存和Redis中的数据
 	if err := c.local.Delete(ctx, key); err != nil {
-		return err
+		return errors.NewError(errors.ErrCache, err)
 	}
 
-	return c.redis.Delete(ctx, c.getKey(key))
+	if err := c.redis.Delete(ctx, c.getKey(key)); err != nil {
+		return errors.NewError(errors.ErrCache, err)
+	}
+	return nil
 }
 
 func (c *TwoLevelCache) Clear(ctx context.Context) error {
@@ -243,8 +259,11 @@ func (c *TwoLevelCache) Clear(ctx context.Context) error {
 
 	// 同时清空本地缓存和Redis
 	if err := c.local.Clear(ctx); err != nil {
-		return err
+		return errors.NewError(errors.ErrCache, err)
 	}
 
-	return c.redis.Clear(ctx)
+	if err := c.redis.Clear(ctx); err != nil {
+		return errors.NewError(errors.ErrCache, err)
+	}
+	return nil
 }

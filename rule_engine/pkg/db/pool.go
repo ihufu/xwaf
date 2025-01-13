@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/pkg/metrics"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -41,12 +42,12 @@ func NewPool(config *Config) (*Pool, error) {
 		Logger: logger.Default.LogMode(logger.Info),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect database: %v", err)
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("连接数据库失败: %v", err))
 	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get database instance: %v", err)
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取数据库实例失败: %v", err))
 	}
 
 	// 设置连接池参数

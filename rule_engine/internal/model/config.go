@@ -2,6 +2,8 @@ package model
 
 import (
 	"fmt"
+
+	"github.com/xwaf/rule_engine/internal/errors"
 )
 
 // WAFMode WAF运行模式
@@ -19,7 +21,7 @@ func (m WAFMode) Validate() error {
 	case WAFModeBlock, WAFModeLog, WAFModeBypass:
 		return nil
 	default:
-		return fmt.Errorf("invalid WAF mode: %s", m)
+		return errors.NewError(errors.ErrValidation, fmt.Sprintf("无效的WAF模式: %s", m))
 	}
 }
 
@@ -95,7 +97,7 @@ func (c *WAFConfig) Validate() error {
 	case WAFModeBlock, WAFModeLog, WAFModeBypass:
 		return nil
 	default:
-		return fmt.Errorf("无效的运行模式: %s", c.Mode)
+		return errors.NewError(errors.ErrValidation, fmt.Sprintf("无效的运行模式: %s", c.Mode))
 	}
 }
 

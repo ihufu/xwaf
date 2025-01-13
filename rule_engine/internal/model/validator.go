@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"github.com/xwaf/rule_engine/internal/errors"
 )
 
 // InputValidator 输入验证器
@@ -63,7 +65,7 @@ func (v *InputValidator) SetSanitize(sanitize bool) *InputValidator {
 func (v *InputValidator) ValidateString(input string) (string, error) {
 	// 检查长度
 	if len(input) > v.maxLength {
-		return "", fmt.Errorf("输入长度超过限制: %d > %d", len(input), v.maxLength)
+		return "", errors.NewError(errors.ErrValidation, fmt.Sprintf("输入长度超过限制: %d > %d", len(input), v.maxLength))
 	}
 
 	// 检查字符
@@ -77,7 +79,7 @@ func (v *InputValidator) ValidateString(input string) (string, error) {
 					return -1
 				}, input)
 			} else {
-				return "", fmt.Errorf("包含非法字符: %c", c)
+				return "", errors.NewError(errors.ErrValidation, fmt.Sprintf("包含非法字符: %c", c))
 			}
 		}
 	}
@@ -88,7 +90,7 @@ func (v *InputValidator) ValidateString(input string) (string, error) {
 			if v.sanitize {
 				input = strings.ReplaceAll(strings.ToLower(input), strings.ToLower(str), "")
 			} else {
-				return "", fmt.Errorf("包含禁止的字符串: %s", str)
+				return "", errors.NewError(errors.ErrValidation, fmt.Sprintf("包含禁止的字符串: %s", str))
 			}
 		}
 	}
@@ -101,27 +103,27 @@ func (v *InputValidator) ValidateURL(input string) (string, error) {
 	// 解析URL
 	u, err := url.Parse(input)
 	if err != nil {
-		return "", fmt.Errorf("无效的url格式: %v", err)
+		return "", errors.NewError(errors.ErrValidation, fmt.Sprintf("无效的url格式: %v", err))
 	}
 
 	// 检查协议
 	if u.Scheme != "" && u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("不支持的url协议: %s", u.Scheme)
+		return "", errors.NewError(errors.ErrValidation, fmt.Sprintf("不支持的url协议: %s", u.Scheme))
 	}
 
 	// 验证路径
 	if strings.Contains(u.Path, "..") {
-		return "", fmt.Errorf("url路径包含目录遍历")
+		return "", errors.NewError(errors.ErrValidation, "url路径包含目录遍历")
 	}
 
 	// 验证查询参数
 	for key, values := range u.Query() {
 		for _, value := range values {
 			if _, err := v.ValidateString(key); err != nil {
-				return "", fmt.Errorf("url参数名称无效: %v", err)
+				return "", errors.NewError(errors.ErrValidation, fmt.Sprintf("url参数名称无效: %v", err))
 			}
 			if _, err := v.ValidateString(value); err != nil {
-				return "", fmt.Errorf("url参数值无效: %v", err)
+				return "", errors.NewError(errors.ErrValidation, fmt.Sprintf("url参数值无效: %v", err))
 			}
 		}
 	}
@@ -136,13 +138,13 @@ func (v *InputValidator) ValidateHeaders(headers map[string]string) (map[string]
 	for key, value := range headers {
 		// 验证头名称
 		if !regexp.MustCompile(`^[a-zA-Z0-9-]+$`).MatchString(key) {
-			return nil, fmt.Errorf("无效的header名称: %s", key)
+			return nil, errors.NewError(errors.ErrValidation, fmt.Sprintf("无效的header名称: %s", key))
 		}
 
 		// 验证头值
 		cleanValue, err := v.ValidateString(value)
 		if err != nil {
-			return nil, fmt.Errorf("header值无效 [%s]: %v", key, err)
+			return nil, errors.NewError(errors.ErrValidation, fmt.Sprintf("header值无效 [%s]: %v", key, err))
 		}
 
 		result[key] = cleanValue
@@ -158,7 +160,7 @@ func (v *InputValidator) ValidateJSON(input map[string]interface{}) (map[string]
 	for key, value := range input {
 		// 验证键
 		if _, err := v.ValidateString(key); err != nil {
-			return nil, fmt.Errorf("json键无效: %v", err)
+			return nil, errors.NewError(errors.ErrValidation, fmt.Sprintf("json键无效: %v", err))
 		}
 
 		// 验证值
@@ -166,19 +168,19 @@ func (v *InputValidator) ValidateJSON(input map[string]interface{}) (map[string]
 		case string:
 			cleanVal, err := v.ValidateString(val)
 			if err != nil {
-				return nil, fmt.Errorf("json值无效 [%s]: %v", key, err)
+				return nil, errors.NewError(errors.ErrValidation, fmt.Sprintf("json值无效 [%s]: %v", key, err))
 			}
 			result[key] = cleanVal
 		case map[string]interface{}:
 			cleanVal, err := v.ValidateJSON(val)
 			if err != nil {
-				return nil, fmt.Errorf("json对象无效 [%s]: %v", key, err)
+				return nil, errors.NewError(errors.ErrValidation, fmt.Sprintf("json对象无效 [%s]: %v", key, err))
 			}
 			result[key] = cleanVal
 		case []interface{}:
 			cleanVal, err := v.ValidateJSONArray(val)
 			if err != nil {
-				return nil, fmt.Errorf("json数组无效 [%s]: %v", key, err)
+				return nil, errors.NewError(errors.ErrValidation, fmt.Sprintf("json数组无效 [%s]: %v", key, err))
 			}
 			result[key] = cleanVal
 		default:
@@ -198,19 +200,19 @@ func (v *InputValidator) ValidateJSONArray(input []interface{}) ([]interface{}, 
 		case string:
 			cleanVal, err := v.ValidateString(val)
 			if err != nil {
-				return nil, fmt.Errorf("数组元素[%d]无效: %v", i, err)
+				return nil, errors.NewError(errors.ErrValidation, fmt.Sprintf("数组元素[%d]无效: %v", i, err))
 			}
 			result = append(result, cleanVal)
 		case map[string]interface{}:
 			cleanVal, err := v.ValidateJSON(val)
 			if err != nil {
-				return nil, fmt.Errorf("数组元素[%d]无效: %v", i, err)
+				return nil, errors.NewError(errors.ErrValidation, fmt.Sprintf("数组元素[%d]无效: %v", i, err))
 			}
 			result = append(result, cleanVal)
 		case []interface{}:
 			cleanVal, err := v.ValidateJSONArray(val)
 			if err != nil {
-				return nil, fmt.Errorf("数组元素[%d]无效: %v", i, err)
+				return nil, errors.NewError(errors.ErrValidation, fmt.Sprintf("数组元素[%d]无效: %v", i, err))
 			}
 			result = append(result, cleanVal)
 		default:

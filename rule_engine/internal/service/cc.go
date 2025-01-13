@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/model"
 	"github.com/xwaf/rule_engine/internal/repository"
 	"github.com/xwaf/rule_engine/pkg/logger"
@@ -38,16 +39,26 @@ func NewCCRuleService(ccRepo repository.CCRuleRepository, cacheRepo repository.C
 
 // CreateCCRule 创建 CC 规则
 func (s *ccRuleService) CreateCCRule(ctx context.Context, rule *model.CCRule) error {
+	// 验证规则
+	if err := rule.Validate(); err != nil {
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("CC规则验证失败: %v", err))
+	}
+
 	if err := s.ccRepo.CreateCCRule(ctx, rule); err != nil {
-		return fmt.Errorf("failed to create cc rule: %w", err)
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("创建CC规则失败: %v", err))
 	}
 	return nil
 }
 
 // UpdateCCRule 更新 CC 规则
 func (s *ccRuleService) UpdateCCRule(ctx context.Context, rule *model.CCRule) error {
+	// 验证规则
+	if err := rule.Validate(); err != nil {
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("CC规则验证失败: %v", err))
+	}
+
 	if err := s.ccRepo.UpdateCCRule(ctx, rule); err != nil {
-		return fmt.Errorf("failed to update cc rule: %w", err)
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("更新CC规则失败: %v", err))
 	}
 	return nil
 }
@@ -55,7 +66,7 @@ func (s *ccRuleService) UpdateCCRule(ctx context.Context, rule *model.CCRule) er
 // DeleteCCRule 删除 CC 规则
 func (s *ccRuleService) DeleteCCRule(ctx context.Context, id int64) error {
 	if err := s.ccRepo.DeleteCCRule(ctx, id); err != nil {
-		return fmt.Errorf("failed to delete cc rule: %w", err)
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("删除CC规则失败: %v", err))
 	}
 	return nil
 }
@@ -64,7 +75,7 @@ func (s *ccRuleService) DeleteCCRule(ctx context.Context, id int64) error {
 func (s *ccRuleService) GetCCRule(ctx context.Context, id int64) (*model.CCRule, error) {
 	rule, err := s.ccRepo.GetCCRule(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get cc rule: %w", err)
+		return nil, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取CC规则失败: %v", err))
 	}
 	return rule, nil
 }
@@ -73,7 +84,7 @@ func (s *ccRuleService) GetCCRule(ctx context.Context, id int64) (*model.CCRule,
 func (s *ccRuleService) ListCCRules(ctx context.Context, query model.CCRuleQuery, page, size int) ([]*model.CCRule, int64, error) {
 	rules, err := s.ccRepo.ListCCRules(ctx, page*size, size)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to list cc rules: %w", err)
+		return nil, 0, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取CC规则列表失败: %v", err))
 	}
 	return rules, int64(len(rules)), nil
 }
@@ -82,7 +93,7 @@ func (s *ccRuleService) ListCCRules(ctx context.Context, query model.CCRuleQuery
 func (s *ccRuleService) CheckCCLimit(ctx context.Context, uri string) (bool, error) {
 	rules, err := s.ccRepo.ListCCRules(ctx, 0, 1000)
 	if err != nil {
-		return true, fmt.Errorf("failed to list cc rules: %w", err)
+		return true, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取CC规则列表失败: %v", err))
 	}
 
 	if len(rules) == 0 {
@@ -113,7 +124,7 @@ func (s *ccRuleService) checkLimit(ctx context.Context, rule *model.CCRule) (boo
 	} else if limitUnit == "hour" {
 		window = time.Duration(timeWindow) * time.Hour
 	} else {
-		return true, fmt.Errorf("invalid limit unit: %s", limitUnit)
+		return true, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("无效的限制单位: %s", limitUnit))
 	}
 
 	var windowEnd = now.Add(window)
@@ -140,22 +151,23 @@ func (s *ccRuleService) checkLimit(ctx context.Context, rule *model.CCRule) (boo
 
 	validRequests = append(validRequests, now)
 	if err := s.cacheRepo.Set(ctx, key, validRequests, window); err != nil {
-		return false, fmt.Errorf("failed to set cc limit cache: %w", err)
+		return false, errors.NewError(errors.ErrCache, fmt.Sprintf("设置CC限制缓存失败: %v", err))
 	}
 
 	return false, nil
 }
 
+// ReloadRules 重新加载规则
 func (s *ccRuleService) ReloadRules(ctx context.Context) error {
 	rules, err := s.ccRepo.ListCCRules(ctx, 0, 1000)
 	if err != nil {
-		return fmt.Errorf("failed to list cc rules: %w", err)
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取CC规则列表失败: %v", err))
 	}
 
 	for _, rule := range rules {
 		key := fmt.Sprintf("cc_limit:%s", rule.URI)
 		if err := s.cacheRepo.Delete(ctx, key); err != nil {
-			logger.Errorf("failed to delete cc limit cache, key: %s, error: %v", key, err)
+			logger.Errorf("删除CC限制缓存失败, key: %s, error: %v", key, err)
 		}
 	}
 	return nil

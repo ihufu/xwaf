@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/model"
 	"github.com/xwaf/rule_engine/internal/repository"
 )
@@ -59,26 +60,29 @@ func (s *ruleVersionService) ListVersions(ctx context.Context, ruleID int64) ([]
 
 // SyncRules 同步规则
 func (s *ruleVersionService) SyncRules(ctx context.Context, event *model.RuleUpdateEvent) error {
+	if event == nil {
+		return errors.NewError(errors.ErrRuleEngine, "规则更新事件不能为空")
+	}
+
 	// 遍历规则差异
 	for _, diff := range event.RuleDiffs {
 		// 创建规则版本
 		content, err := json.Marshal(diff)
 		if err != nil {
-			return fmt.Errorf("序列化规则差异失败: %v", err)
+			return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("序列化规则差异失败: %v", err))
 		}
 
 		version := &model.RuleVersion{
 			RuleID:     diff.RuleID,
 			Version:    event.Version,
-			Hash:       diff.NewRule.Hash,
 			Content:    string(content),
-			ChangeType: diff.Operation,
+			ChangeType: string(diff.UpdateType),
 			Status:     "synced",
-			CreatedBy:  diff.NewRule.UpdatedBy,
+			CreatedBy:  diff.RuleID,
 		}
 
 		if err := s.versionRepo.CreateVersion(ctx, version); err != nil {
-			return fmt.Errorf("创建规则版本失败: %v", err)
+			return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("创建规则版本失败: %v", err))
 		}
 
 		// 创建同步日志
@@ -86,12 +90,12 @@ func (s *ruleVersionService) SyncRules(ctx context.Context, event *model.RuleUpd
 			RuleID:   diff.RuleID,
 			Version:  event.Version,
 			Status:   "success",
-			Message:  fmt.Sprintf("规则%s成功", diff.Operation),
-			SyncType: diff.Operation,
+			Message:  fmt.Sprintf("规则%s成功", diff.UpdateType),
+			SyncType: string(diff.UpdateType),
 		}
 
 		if err := s.versionRepo.CreateSyncLog(ctx, log); err != nil {
-			return fmt.Errorf("创建同步日志失败: %v", err)
+			return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("创建同步日志失败: %v", err))
 		}
 	}
 
@@ -105,20 +109,24 @@ func (s *ruleVersionService) GetSyncLogs(ctx context.Context, ruleID int64) ([]*
 
 // RollbackToVersion 回滚到指定版本
 func (s *ruleVersionService) RollbackToVersion(ctx context.Context, version int64) error {
+	if version <= 0 {
+		return errors.NewError(errors.ErrRuleEngine, "版本号必须大于0")
+	}
+
 	// 获取目标版本的规则
 	rules, err := s.versionRepo.GetRulesByVersion(ctx, version)
 	if err != nil {
-		return fmt.Errorf("获取历史版本规则失败: %v", err)
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取历史版本规则失败: %v", err))
 	}
 
 	// 验证版本有效性
 	currentVersion, err := s.versionRepo.GetLatestVersion(ctx)
 	if err != nil {
-		return fmt.Errorf("获取当前版本失败: %v", err)
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取当前版本失败: %v", err))
 	}
 
 	if version >= currentVersion {
-		return fmt.Errorf("无法回滚到更新的版本")
+		return errors.NewError(errors.ErrRuleEngine, "无法回滚到更新的版本")
 	}
 
 	// 创建回滚事件
@@ -130,12 +138,12 @@ func (s *ruleVersionService) RollbackToVersion(ctx context.Context, version int6
 
 	// 执行回滚
 	if err := s.versionRepo.RollbackRules(ctx, rules, event); err != nil {
-		return fmt.Errorf("规则回滚失败: %v", err)
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("规则回滚失败: %v", err))
 	}
 
 	// 更新缓存
 	if err := s.versionRepo.RefreshRules(ctx); err != nil {
-		return fmt.Errorf("刷新规则缓存失败: %v", err)
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("刷新规则缓存失败: %v", err))
 	}
 
 	return nil

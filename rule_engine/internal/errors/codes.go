@@ -8,10 +8,11 @@ const (
 	Success ErrorCode = 0
 
 	// 系统错误 (1000-1999)
-	ErrInit    ErrorCode = 1000 // 初始化错误
-	ErrConfig  ErrorCode = 1001 // 配置错误
-	ErrRuntime ErrorCode = 1002 // 运行时错误
-	ErrSystem  ErrorCode = 1003 // 系统错误
+	ErrInit       ErrorCode = 1000 // 初始化错误
+	ErrConfig     ErrorCode = 1001 // 配置错误
+	ErrRuntime    ErrorCode = 1002 // 运行时错误
+	ErrSystem     ErrorCode = 1003 // 系统错误
+	ErrValidation ErrorCode = 1004 // 验证错误
 
 	// 请求错误 (2000-2999)
 	ErrInvalidRequest   ErrorCode = 2000 // 无效请求
@@ -50,10 +51,11 @@ var ErrorMessage = map[ErrorCode]string{
 	Success: "成功",
 
 	// 系统错误
-	ErrInit:    "初始化错误",
-	ErrConfig:  "配置错误",
-	ErrRuntime: "运行时错误",
-	ErrSystem:  "系统错误",
+	ErrInit:       "初始化错误",
+	ErrConfig:     "配置错误",
+	ErrRuntime:    "运行时错误",
+	ErrSystem:     "系统错误",
+	ErrValidation: "验证错误",
 
 	// 请求错误
 	ErrInvalidRequest:   "无效的请求",
@@ -93,5 +95,6 @@ var ErrorMessages = map[ErrorCode]string{
 	ErrSystem:        "系统错误",
 	ErrInvalidParams: "无效的参数",
 	ErrRuleEngine:    "规则引擎错误",
+	ErrValidation:    "验证错误",
 	// ... existing code ...
 }

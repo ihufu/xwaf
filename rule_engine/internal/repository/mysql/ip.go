@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/model"
 	"github.com/xwaf/rule_engine/internal/repository"
 )
@@ -32,12 +33,12 @@ func (r *ipRuleRepository) CreateIPRule(ctx context.Context, rule *model.IPRule)
 		rule.CreatedBy, rule.UpdatedBy,
 	)
 	if err != nil {
-		return fmt.Errorf("创建IP规则失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("创建IP规则失败: %v", err))
 	}
 
 	id, err := result.LastInsertId()
 	if err != nil {
-		return fmt.Errorf("获取IP规则ID失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("获取IP规则ID失败: %v", err))
 	}
 	rule.ID = id
 
@@ -57,15 +58,15 @@ func (r *ipRuleRepository) UpdateIPRule(ctx context.Context, rule *model.IPRule)
 		rule.UpdatedBy, rule.ID,
 	)
 	if err != nil {
-		return fmt.Errorf("更新IP规则失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("更新IP规则失败: %v", err))
 	}
 
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("获取影响行数失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("获取影响行数失败: %v", err))
 	}
 	if affected == 0 {
-		return fmt.Errorf("IP规则不存在: %d", rule.ID)
+		return errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("IP规则不存在: %d", rule.ID))
 	}
 
 	return nil
@@ -76,15 +77,15 @@ func (r *ipRuleRepository) DeleteIPRule(ctx context.Context, id int64) error {
 	query := "DELETE FROM ip_rules WHERE id = ?"
 	result, err := r.db.ExecContext(ctx, query, id)
 	if err != nil {
-		return fmt.Errorf("删除IP规则失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("删除IP规则失败: %v", err))
 	}
 
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("获取影响行数失败: %v", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("获取影响行数失败: %v", err))
 	}
 	if affected == 0 {
-		return fmt.Errorf("IP规则不存在: %d", id)
+		return errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("IP规则不存在: %d", id))
 	}
 
 	return nil
@@ -104,10 +105,10 @@ func (r *ipRuleRepository) GetIPRule(ctx context.Context, id int64) (*model.IPRu
 		&rule.CreatedAt, &rule.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("IP规则不存在: %d", id))
 	}
 	if err != nil {
-		return nil, fmt.Errorf("获取IP规则失败: %v", err)
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取IP规则失败: %v", err))
 	}
 
 	return &rule, nil
@@ -127,10 +128,10 @@ func (r *ipRuleRepository) GetIPRuleByIP(ctx context.Context, ip string) (*model
 		&rule.CreatedAt, &rule.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("IP规则不存在: %s", ip))
 	}
 	if err != nil {
-		return nil, fmt.Errorf("获取IP规则失败: %v", err)
+		return nil, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取IP规则失败: %v", err))
 	}
 
 	return &rule, nil
@@ -163,7 +164,7 @@ func (r *ipRuleRepository) ListIPRules(ctx context.Context, query *model.IPRuleQ
 	var total int64
 	err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
-		return nil, 0, fmt.Errorf("获取IP规则总数失败: %v", err)
+		return nil, 0, errors.NewError(errors.ErrSystem, fmt.Sprintf("获取IP规则总数失败: %v", err))
 	}
 
 	// 查询列表
@@ -177,7 +178,7 @@ func (r *ipRuleRepository) ListIPRules(ctx context.Context, query *model.IPRuleQ
 
 	rows, err := r.db.QueryContext(ctx, listQuery, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("查询IP规则列表失败: %v", err)
+		return nil, 0, errors.NewError(errors.ErrSystem, fmt.Sprintf("查询IP规则列表失败: %v", err))
 	}
 	defer rows.Close()
 
@@ -190,9 +191,13 @@ func (r *ipRuleRepository) ListIPRules(ctx context.Context, query *model.IPRuleQ
 			&rule.CreatedAt, &rule.UpdatedAt,
 		)
 		if err != nil {
-			return nil, 0, fmt.Errorf("扫描IP规则数据失败: %v", err)
+			return nil, 0, errors.NewError(errors.ErrSystem, fmt.Sprintf("扫描IP规则数据失败: %v", err))
 		}
 		rules = append(rules, &rule)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, errors.NewError(errors.ErrSystem, fmt.Sprintf("遍历IP规则数据失败: %v", err))
 	}
 
 	return rules, total, nil
@@ -204,7 +209,7 @@ func (r *ipRuleRepository) ExistsByIP(ctx context.Context, ip string) (bool, err
 	var count int
 	err := r.db.QueryRowContext(ctx, query, ip).Scan(&count)
 	if err != nil {
-		return false, fmt.Errorf("检查IP规则是否存在失败: %v", err)
+		return false, errors.NewError(errors.ErrSystem, fmt.Sprintf("检查IP规则是否存在失败: %v", err))
 	}
 	return count > 0, nil
 }

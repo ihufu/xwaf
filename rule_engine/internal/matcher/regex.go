@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/model"
 )
 
@@ -95,7 +96,7 @@ func containsMetachars(s string) bool {
 // validateRegex 验证正则表达式的复杂度
 func (m *RegexMatcher) validateRegex(pattern string) error {
 	if len(pattern) > maxRegexLength {
-		return fmt.Errorf("正则表达式过长，最大允许长度为 %d", maxRegexLength)
+		return errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("正则表达式过长，最大允许长度为 %d", maxRegexLength))
 	}
 
 	// 检查嵌套深度
@@ -113,7 +114,7 @@ func (m *RegexMatcher) validateRegex(pattern string) error {
 	}
 
 	if maxDepth > 5 {
-		return fmt.Errorf("正则表达式嵌套深度过高，最大允许深度为 5")
+		return errors.NewError(errors.ErrRuleMatch, "正则表达式嵌套深度过高，最大允许深度为 5")
 	}
 
 	// 检查重复次数
@@ -123,7 +124,7 @@ func (m *RegexMatcher) validateRegex(pattern string) error {
 			if end != -1 {
 				repeat := pattern[i+1 : i+end]
 				if n, err := strconv.Atoi(repeat); err == nil && n > 100 {
-					return fmt.Errorf("正则表达式重复次数过多，最大允许重复次数为 100")
+					return errors.NewError(errors.ErrRuleMatch, "正则表达式重复次数过多，最大允许重复次数为 100")
 				}
 			}
 		}
@@ -136,7 +137,7 @@ func (m *RegexMatcher) validateRegex(pattern string) error {
 func (m *RegexMatcher) Add(rule *model.Rule) error {
 	// 验证正则表达式复杂度
 	if err := m.validateRegex(rule.Pattern); err != nil {
-		return err
+		return errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("正则表达式验证失败: %v", err))
 	}
 
 	m.mutex.Lock()
@@ -145,7 +146,7 @@ func (m *RegexMatcher) Add(rule *model.Rule) error {
 	// 编译正则表达式
 	regex, err := regexp.Compile(rule.Pattern)
 	if err != nil {
-		return fmt.Errorf("编译正则表达式失败: %v", err)
+		return errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("编译正则表达式失败: %v", err))
 	}
 
 	// 优化正则表达式
@@ -179,7 +180,7 @@ func (m *RegexMatcher) Remove(ruleID int64) error {
 
 	rule, exists := m.rules[ruleID]
 	if !exists {
-		return nil
+		return errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("规则不存在: %d", ruleID))
 	}
 
 	// 从前缀索引中移除
@@ -202,7 +203,7 @@ func (m *RegexMatcher) Remove(ruleID int64) error {
 func (m *RegexMatcher) Match(ctx context.Context, req *model.CheckRequest) ([]*model.RuleMatch, error) {
 	// 检查 context 是否已取消
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("上下文已取消: %v", err))
 	}
 
 	m.mutex.RLock()
@@ -231,7 +232,7 @@ func (m *RegexMatcher) Match(ctx context.Context, req *model.CheckRequest) ([]*m
 	for _, rule := range candidateRules {
 		// 定期检查 context 是否取消
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("上下文已取消: %v", err))
 		}
 
 		// 如果是字面量匹配，使用字符串查找
@@ -248,15 +249,13 @@ func (m *RegexMatcher) Match(ctx context.Context, req *model.CheckRequest) ([]*m
 		}
 
 		// 执行正则匹配
-		if locs := rule.regex.FindAllStringIndex(content, -1); locs != nil {
-			for _, loc := range locs {
-				matches = append(matches, &model.RuleMatch{
-					Rule:       rule.rule,
-					MatchedStr: content[loc[0]:loc[1]],
-					Position:   loc[0],
-					Score:      1.0,
-				})
-			}
+		if match := rule.regex.FindStringIndex(content); match != nil {
+			matches = append(matches, &model.RuleMatch{
+				Rule:       rule.rule,
+				MatchedStr: content[match[0]:match[1]],
+				Position:   match[0],
+				Score:      1.0,
+			})
 		}
 	}
 

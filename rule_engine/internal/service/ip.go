@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/model"
 	"github.com/xwaf/rule_engine/internal/repository"
 	"github.com/xwaf/rule_engine/pkg/logger"
@@ -40,61 +41,73 @@ func NewIPRuleService(ipRepo repository.IPRuleRepository, cacheRepo repository.C
 func (s *ipRuleService) CreateIPRule(ctx context.Context, rule *model.IPRule) error {
 	// 验证规则
 	if err := rule.Validate(); err != nil {
-		return fmt.Errorf("规则验证失败: %v", err)
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("规则验证失败: %v", err))
 	}
 
 	// 检查IP是否已存在
 	exists, err := s.ipRepo.ExistsByIP(ctx, rule.IP)
 	if err != nil {
-		return err
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("检查IP是否存在失败: %v", err))
 	}
 	if exists {
-		return fmt.Errorf("IP %s 已存在规则", rule.IP)
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("IP %s 已存在规则", rule.IP))
 	}
 
 	// 创建规则
 	if err := s.ipRepo.CreateIPRule(ctx, rule); err != nil {
-		return err
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("创建IP规则失败: %v", err))
 	}
 
 	// 更新缓存
-	return s.updateIPRuleCache(ctx, rule)
+	if err := s.updateIPRuleCache(ctx, rule); err != nil {
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("更新IP规则缓存失败: %v", err))
+	}
+
+	return nil
 }
 
 // UpdateIPRule 更新IP规则
 func (s *ipRuleService) UpdateIPRule(ctx context.Context, rule *model.IPRule) error {
 	// 验证规则
 	if err := rule.Validate(); err != nil {
-		return fmt.Errorf("规则验证失败: %v", err)
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("规则验证失败: %v", err))
 	}
 
 	// 检查规则是否存在
 	oldRule, err := s.ipRepo.GetIPRule(ctx, rule.ID)
 	if err != nil {
-		return err
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取IP规则失败: %v", err))
 	}
 	if oldRule == nil {
-		return fmt.Errorf("规则不存在: %d", rule.ID)
+		return errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("规则不存在: %d", rule.ID))
 	}
 
 	// 更新规则
 	if err := s.ipRepo.UpdateIPRule(ctx, rule); err != nil {
-		return err
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("更新IP规则失败: %v", err))
 	}
 
 	// 更新缓存
-	return s.updateIPRuleCache(ctx, rule)
+	if err := s.updateIPRuleCache(ctx, rule); err != nil {
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("更新IP规则缓存失败: %v", err))
+	}
+
+	return nil
 }
 
 // DeleteIPRule 删除IP规则
 func (s *ipRuleService) DeleteIPRule(ctx context.Context, id int64) error {
 	// 删除规则
 	if err := s.ipRepo.DeleteIPRule(ctx, id); err != nil {
-		return err
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("删除IP规则失败: %v", err))
 	}
 
 	// 删除缓存
-	return s.deleteIPRuleCache(ctx, id)
+	if err := s.deleteIPRuleCache(ctx, id); err != nil {
+		return errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("删除IP规则缓存失败: %v", err))
+	}
+
+	return nil
 }
 
 // GetIPRule 获取IP规则
@@ -108,7 +121,7 @@ func (s *ipRuleService) GetIPRule(ctx context.Context, id int64) (*model.IPRule,
 	// 从数据库获取
 	rule, err = s.ipRepo.GetIPRule(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取IP规则失败: %v", err))
 	}
 
 	// 更新缓存
@@ -125,7 +138,11 @@ func (s *ipRuleService) GetIPRule(ctx context.Context, id int64) (*model.IPRule,
 func (s *ipRuleService) ListIPRules(ctx context.Context, query model.IPRuleQuery, page, size int) ([]*model.IPRule, int64, error) {
 	offset := (page - 1) * size
 	queryPtr := &query
-	return s.ipRepo.ListIPRules(ctx, queryPtr, offset, size)
+	rules, total, err := s.ipRepo.ListIPRules(ctx, queryPtr, offset, size)
+	if err != nil {
+		return nil, 0, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取IP规则列表失败: %v", err))
+	}
+	return rules, total, nil
 }
 
 // IsIPBlocked 检查IP是否被封禁
@@ -139,7 +156,7 @@ func (s *ipRuleService) IsIPBlocked(ctx context.Context, ip string) (bool, error
 	// 从数据库查询
 	rule, err := s.ipRepo.GetIPRuleByIP(ctx, ip)
 	if err != nil {
-		return false, err
+		return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取IP规则失败: %v", err))
 	}
 
 	// 检查是否在黑名单且未过期
@@ -164,7 +181,7 @@ func (s *ipRuleService) IsIPWhitelisted(ctx context.Context, ip string) (bool, e
 	// 从数据库查询
 	rule, err := s.ipRepo.GetIPRuleByIP(ctx, ip)
 	if err != nil {
-		return false, err
+		return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取IP规则失败: %v", err))
 	}
 
 	return rule != nil && rule.IPType == model.IPListTypeWhite, nil
@@ -174,7 +191,7 @@ func (s *ipRuleService) IsIPWhitelisted(ctx context.Context, ip string) (bool, e
 func (s *ipRuleService) CheckIP(ctx context.Context, ip string) (bool, error) {
 	rules, _, err := s.ListIPRules(ctx, model.IPRuleQuery{}, 1, 1000)
 	if err != nil {
-		return false, err
+		return false, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取IP规则列表失败: %v", err))
 	}
 
 	for _, rule := range rules {
@@ -188,20 +205,25 @@ func (s *ipRuleService) CheckIP(ctx context.Context, ip string) (bool, error) {
 // 缓存相关的辅助方法
 func (s *ipRuleService) updateIPRuleCache(ctx context.Context, rule *model.IPRule) error {
 	key := fmt.Sprintf("ip_rule:%d", rule.ID)
-	return s.cacheRepo.Set(ctx, key, rule, 24*time.Hour)
+	if err := s.cacheRepo.Set(ctx, key, rule, 24*time.Hour); err != nil {
+		return errors.NewError(errors.ErrCache, fmt.Sprintf("设置IP规则缓存失败: %v", err))
+	}
+	return nil
 }
 
 func (s *ipRuleService) deleteIPRuleCache(ctx context.Context, id int64) error {
 	key := fmt.Sprintf("ip_rule:%d", id)
-	return s.cacheRepo.Delete(ctx, key)
+	if err := s.cacheRepo.Delete(ctx, key); err != nil {
+		return errors.NewError(errors.ErrCache, fmt.Sprintf("删除IP规则缓存失败: %v", err))
+	}
+	return nil
 }
 
 func (s *ipRuleService) getIPRuleFromCache(ctx context.Context, id int64) (*model.IPRule, error) {
 	key := fmt.Sprintf("ip_rule:%d", id)
 	var rule model.IPRule
-	err := s.cacheRepo.Get(ctx, key, &rule)
-	if err != nil {
-		return nil, err
+	if err := s.cacheRepo.Get(ctx, key, &rule); err != nil {
+		return nil, errors.NewError(errors.ErrCache, fmt.Sprintf("获取IP规则缓存失败: %v", err))
 	}
 	return &rule, nil
 }
@@ -209,9 +231,8 @@ func (s *ipRuleService) getIPRuleFromCache(ctx context.Context, id int64) (*mode
 func (s *ipRuleService) isIPBlockedFromCache(ctx context.Context, ip string) (bool, error) {
 	key := fmt.Sprintf("ip_blocked:%s", ip)
 	var blocked bool
-	err := s.cacheRepo.Get(ctx, key, &blocked)
-	if err != nil {
-		return false, err
+	if err := s.cacheRepo.Get(ctx, key, &blocked); err != nil {
+		return false, errors.NewError(errors.ErrCache, fmt.Sprintf("获取IP封禁状态缓存失败: %v", err))
 	}
 	return blocked, nil
 }
@@ -219,9 +240,8 @@ func (s *ipRuleService) isIPBlockedFromCache(ctx context.Context, ip string) (bo
 func (s *ipRuleService) isIPWhitelistedFromCache(ctx context.Context, ip string) (bool, error) {
 	key := fmt.Sprintf("ip_whitelisted:%s", ip)
 	var whitelisted bool
-	err := s.cacheRepo.Get(ctx, key, &whitelisted)
-	if err != nil {
-		return false, err
+	if err := s.cacheRepo.Get(ctx, key, &whitelisted); err != nil {
+		return false, errors.NewError(errors.ErrCache, fmt.Sprintf("获取IP白名单状态缓存失败: %v", err))
 	}
 	return whitelisted, nil
 }

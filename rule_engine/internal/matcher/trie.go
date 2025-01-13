@@ -2,9 +2,11 @@ package matcher
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/model"
 )
 
@@ -32,13 +34,21 @@ func NewTrieMatcher() *TrieMatcher {
 
 // Add 添加规则到Trie树
 func (t *TrieMatcher) Add(rule *model.Rule) error {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
+	if rule == nil {
+		return errors.NewError(errors.ErrRuleMatch, "规则不能为空")
+	}
 
 	// 仅处理URL类型的规则
 	if rule.RuleVariable != "request_uri" {
 		return nil
 	}
+
+	if rule.Pattern == "" {
+		return errors.NewError(errors.ErrRuleMatch, "规则模式不能为空")
+	}
+
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
 
 	// 分割URL路径
 	parts := strings.Split(strings.Trim(rule.Pattern, "/"), "/")
@@ -60,9 +70,14 @@ func (t *TrieMatcher) Add(rule *model.Rule) error {
 
 // Remove 从Trie树中移除规则
 func (t *TrieMatcher) Remove(ruleID int64) error {
+	if ruleID <= 0 {
+		return errors.NewError(errors.ErrRuleMatch, "无效的规则ID")
+	}
+
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 
+	var found bool
 	var removeFromNode func(*TrieNode) bool
 	removeFromNode = func(node *TrieNode) bool {
 		if node == nil {
@@ -77,6 +92,7 @@ func (t *TrieMatcher) Remove(ruleID int64) error {
 					if len(node.rules) == 0 {
 						node.isEnd = false
 					}
+					found = true
 					return true
 				}
 			}
@@ -93,11 +109,26 @@ func (t *TrieMatcher) Remove(ruleID int64) error {
 	}
 
 	removeFromNode(t.root)
+	if !found {
+		return errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("规则不存在: %d", ruleID))
+	}
 	return nil
 }
 
 // Match 在Trie树中匹配URL
 func (t *TrieMatcher) Match(ctx context.Context, req *model.CheckRequest) ([]*model.RuleMatch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("上下文已取消: %v", err))
+	}
+
+	if req == nil {
+		return nil, errors.NewError(errors.ErrRuleMatch, "请求参数不能为空")
+	}
+
+	if req.URI == "" {
+		return nil, errors.NewError(errors.ErrRuleMatch, "请求URI不能为空")
+	}
+
 	t.mutex.RLock()
 	defer t.mutex.RUnlock()
 

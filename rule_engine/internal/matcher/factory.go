@@ -3,6 +3,8 @@ package matcher
 import (
 	"fmt"
 	"sync"
+
+	"github.com/xwaf/rule_engine/internal/errors"
 )
 
 // MatcherFactory 匹配器工厂实现
@@ -32,7 +34,7 @@ func (f *MatcherFactory) CreateMatcher(matcherType string) (Matcher, error) {
 
 	matcher, exists := f.matchers[matcherType]
 	if !exists {
-		return nil, fmt.Errorf("未知的匹配器类型: %s", matcherType)
+		return nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("未知的匹配器类型: %s", matcherType))
 	}
 
 	return matcher, nil
@@ -61,7 +63,7 @@ func CreateDefaultMatchers() ([]Matcher, error) {
 func CreateParallelMatcher() (Matcher, error) {
 	matchers, err := CreateDefaultMatchers()
 	if err != nil {
-		return nil, err
+		return nil, errors.NewError(errors.ErrRuleMatch, fmt.Sprintf("创建默认匹配器失败: %v", err))
 	}
 	return NewParallelMatcher(matchers), nil
 }
