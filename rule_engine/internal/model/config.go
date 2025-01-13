@@ -2,23 +2,21 @@ package model
 
 import (
 	"fmt"
-	"time"
 )
 
-// WAFMode WAF 运行模式
+// WAFMode WAF运行模式
 type WAFMode string
 
 const (
-	WAFModeBlock   WAFMode = "block"  // 阻断模式
-	WAFModeAlert   WAFMode = "alert"  // 监控模式
-	WAFModeBypass  WAFMode = "bypass" // 旁路模式
-	WAFModeMonitor WAFMode = "monitor"
+	WAFModeBlock  WAFMode = "block"  // 阻断模式
+	WAFModeLog    WAFMode = "log"    // 日志模式
+	WAFModeBypass WAFMode = "bypass" // 旁路模式
 )
 
 // Validate 验证 WAF 模式
 func (m WAFMode) Validate() error {
 	switch m {
-	case WAFModeBlock, WAFModeAlert, WAFModeBypass:
+	case WAFModeBlock, WAFModeLog, WAFModeBypass:
 		return nil
 	default:
 		return fmt.Errorf("invalid WAF mode: %s", m)
@@ -69,23 +67,36 @@ type LogConfig struct {
 	Compress   bool   `yaml:"compress" json:"compress" toml:"compress"`
 }
 
-// WAFConfig WAF 配置
+// WAFConfig WAF配置
 type WAFConfig struct {
-	ID          int64     `json:"id" db:"id"`
-	Mode        WAFMode   `json:"mode" db:"mode"`
-	Description string    `json:"description" db:"description"`
-	CreatedBy   string    `json:"created_by" db:"created_by"`
-	UpdatedBy   string    `json:"updated_by" db:"updated_by"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+	ID          int64   `json:"id" gorm:"primary_key"`                 // 配置ID
+	Mode        WAFMode `json:"mode" gorm:"column:mode"`               // 运行模式
+	UpdatedAt   int64   `json:"updated_at" gorm:"column:updated_at"`   // 更新时间
+	UpdatedBy   string  `json:"updated_by" gorm:"column:updated_by"`   // 更新人
+	CreatedAt   int64   `json:"created_at" gorm:"column:created_at"`   // 创建时间
+	CreatedBy   string  `json:"created_by" gorm:"column:created_by"`   // 创建人
+	Description string  `json:"description" gorm:"column:description"` // 描述
+}
+
+// WAFModeChangeLog WAF运行模式变更日志
+type WAFModeChangeLog struct {
+	ID          int64   `json:"id" gorm:"primary_key"`
+	OldMode     WAFMode `json:"old_mode" gorm:"column:old_mode"`       // 原模式
+	NewMode     WAFMode `json:"new_mode" gorm:"column:new_mode"`       // 新模式
+	Operator    string  `json:"operator" gorm:"column:operator"`       // 操作人
+	Reason      string  `json:"reason" gorm:"column:reason"`           // 变更原因
+	CreatedAt   int64   `json:"created_at" gorm:"column:created_at"`   // 创建时间
+	Description string  `json:"description" gorm:"column:description"` // 描述
 }
 
 // Validate 验证配置
 func (c *WAFConfig) Validate() error {
-	if c.Mode != WAFModeBlock && c.Mode != WAFModeMonitor {
-		return fmt.Errorf("无效的WAF模式: %s", c.Mode)
+	switch c.Mode {
+	case WAFModeBlock, WAFModeLog, WAFModeBypass:
+		return nil
+	default:
+		return fmt.Errorf("无效的运行模式: %s", c.Mode)
 	}
-	return nil
 }
 
 // RuleEngineConfig 规则引擎配置

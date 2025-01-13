@@ -89,3 +89,64 @@ func (r *wafConfigRepository) UpdateConfig(ctx context.Context, config *model.WA
 
 	return nil
 }
+
+// LogModeChange 记录模式变更日志
+func (r *wafConfigRepository) LogModeChange(ctx context.Context, log *model.WAFModeChangeLog) error {
+	query := `
+		INSERT INTO waf_mode_change_logs (old_mode, new_mode, operator, reason, description, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`
+	_, err := r.db.ExecContext(ctx, query,
+		log.OldMode, log.NewMode, log.Operator,
+		log.Reason, log.Description, log.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("记录模式变更日志失败: %v", err)
+	}
+	return nil
+}
+
+// GetModeChangeLogs 获取模式变更日志
+func (r *wafConfigRepository) GetModeChangeLogs(ctx context.Context, startTime, endTime int64, page, pageSize int) ([]*model.WAFModeChangeLog, int64, error) {
+	// 获取总数
+	countQuery := `
+		SELECT COUNT(*) FROM waf_mode_change_logs 
+		WHERE created_at BETWEEN ? AND ?
+	`
+	var total int64
+	err := r.db.QueryRowContext(ctx, countQuery, startTime, endTime).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("获取模式变更日志总数失败: %v", err)
+	}
+
+	// 获取日志列表
+	offset := (page - 1) * pageSize
+	query := `
+		SELECT id, old_mode, new_mode, operator, reason, description, created_at
+		FROM waf_mode_change_logs
+		WHERE created_at BETWEEN ? AND ?
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?
+	`
+	rows, err := r.db.QueryContext(ctx, query, startTime, endTime, pageSize, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("获取模式变更日志失败: %v", err)
+	}
+	defer rows.Close()
+
+	var logs []*model.WAFModeChangeLog
+	for rows.Next() {
+		var log model.WAFModeChangeLog
+		err := rows.Scan(
+			&log.ID, &log.OldMode, &log.NewMode,
+			&log.Operator, &log.Reason, &log.Description,
+			&log.CreatedAt,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("扫描模式变更日志失败: %v", err)
+		}
+		logs = append(logs, &log)
+	}
+
+	return logs, total, nil
+}

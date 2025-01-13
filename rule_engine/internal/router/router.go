@@ -8,7 +8,7 @@ import (
 
 // SetupRouter 设置路由
 func SetupRouter(ruleHandler *handler.RuleHandler, ipHandler *handler.IPRuleHandler,
-	ccHandler *handler.CCRuleHandler, versionHandler *handler.RuleVersionHandler) *gin.Engine {
+	ccHandler *handler.CCRuleHandler, versionHandler *handler.RuleVersionHandler, configHandler *handler.ConfigHandler) *gin.Engine {
 	r := gin.New()
 
 	// 中间件
@@ -66,6 +66,14 @@ func SetupRouter(ruleHandler *handler.RuleHandler, ipHandler *handler.IPRuleHand
 			cc.GET("/:id", ccHandler.GetCCRule)
 			cc.GET("", ccHandler.ListCCRules)
 			cc.GET("/check/:uri", ccHandler.CheckCCLimit)
+		}
+
+		// 配置相关路由
+		configGroup := api.Group("/config")
+		{
+			configGroup.GET("/mode", configHandler.GetMode)                // 获取运行模式
+			configGroup.PUT("/mode", configHandler.UpdateMode)             // 更新运行模式
+			configGroup.GET("/mode/logs", configHandler.GetModeChangeLogs) // 获取模式变更日志
 		}
 	}
 

@@ -13,4 +13,10 @@ type WAFConfigRepository interface {
 
 	// UpdateConfig 更新WAF配置
 	UpdateConfig(ctx context.Context, config *model.WAFConfig) error
+
+	// LogModeChange 记录模式变更日志
+	LogModeChange(ctx context.Context, log *model.WAFModeChangeLog) error
+
+	// GetModeChangeLogs 获取模式变更日志
+	GetModeChangeLogs(ctx context.Context, startTime, endTime int64, page, pageSize int) ([]*model.WAFModeChangeLog, int64, error)
 }

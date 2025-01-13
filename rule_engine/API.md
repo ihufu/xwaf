@@ -766,6 +766,117 @@ Response:
 }
 ```
 
+### 3.6 运行模式管理接口
+
+#### 3.6.1 获取当前运行模式
+```http
+GET /api/v1/config/mode
+
+Response:
+{
+    "code": 0,
+    "message": "success",
+    "data": {
+        "mode": "block"  // block: 阻断模式 / log: 日志模式 / bypass: 旁路模式
+    }
+}
+```
+
+#### 3.6.2 更新运行模式
+```http
+PUT /api/v1/config/mode
+Content-Type: application/json
+
+Request:
+{
+    "mode": "block",        // 运行模式: block/log/bypass
+    "reason": "string",     // 变更原因（必填）
+    "description": "string" // 变更描述（选填）
+}
+
+Response:
+{
+    "code": 0,
+    "message": "success",
+    "data": {
+        "mode": "block",
+        "updated_at": 1641916800
+    }
+}
+```
+
+#### 3.6.3 获取模式变更日志
+```http
+GET /api/v1/config/mode/logs?start_time=1641916800&end_time=1641999999&page=1&size=20
+
+Parameters:
+- start_time: 开始时间戳（秒）
+- end_time: 结束时间戳（秒）
+- page: 页码，默认1
+- size: 每页大小，默认20
+
+Response:
+{
+    "code": 0,
+    "message": "success",
+    "data": {
+        "total": 100,
+        "logs": [
+            {
+                "id": 1,
+                "old_mode": "log",
+                "new_mode": "block",
+                "operator": "admin",
+                "reason": "安全策略要求",
+                "description": "切换到阻断模式以应对安全威胁",
+                "created_at": 1641916800
+            }
+        ]
+    }
+}
+```
+
+### 3.7 运行模式说明
+
+#### 3.7.1 模式类型
+1. **阻断模式 (block)**
+   - 匹配规则时直接阻断请求
+   - 返回 403 状态码
+   - 记录阻断日志
+   - 支持自定义阻断页面
+
+2. **日志模式 (log)**
+   - 只记录日志，不阻断请求
+   - 记录规则匹配情况
+   - 支持多级别日志
+   - 用于规则测试和审计
+
+3. **旁路模式 (bypass)**
+   - 完全放行所有请求
+   - 仍然记录基础访问日志
+   - 用于紧急情况或维护时
+
+#### 3.7.2 最佳实践
+1. **模式切换建议**
+   - 新规则上线时先使用日志模式观察
+   - 确认规则稳定后再切换到阻断模式
+   - 发现异常时可临时切换到旁路模式
+
+2. **日志记录**
+   - 所有模式变更必须记录变更原因
+   - 重要变更需要添加详细描述
+   - 定期审计模式变更日志
+
+3. **权限控制**
+   - 限制模式变更操作权限
+   - 关键模式变更需要多人审批
+   - 记录所有操作人信息
+
+4. **监控告警**
+   - 监控模式变更频率
+   - 异常模式切换及时告警
+   - 定期同步模式状态
+
 ## 4. 最佳实践
 
 ### 4.1 错误处理

@@ -20,6 +20,12 @@ type WAFConfigService interface {
 
 	// GetMode 获取WAF运行模式
 	GetMode(ctx context.Context) (model.WAFMode, error)
+
+	// LogModeChange 记录模式变更日志
+	LogModeChange(ctx context.Context, log *model.WAFModeChangeLog) error
+
+	// GetModeChangeLogs 获取模式变更日志
+	GetModeChangeLogs(ctx context.Context, startTime, endTime int64, page, pageSize int) ([]*model.WAFModeChangeLog, int64, error)
 }
 
 // wafConfigService WAF配置服务实现
@@ -120,4 +126,14 @@ func (s *wafConfigService) getModeFromCache(ctx context.Context) (model.WAFMode,
 		return "", err
 	}
 	return mode, nil
+}
+
+// LogModeChange 记录模式变更日志
+func (s *wafConfigService) LogModeChange(ctx context.Context, log *model.WAFModeChangeLog) error {
+	return s.configRepo.LogModeChange(ctx, log)
+}
+
+// GetModeChangeLogs 获取模式变更日志
+func (s *wafConfigService) GetModeChangeLogs(ctx context.Context, startTime, endTime int64, page, pageSize int) ([]*model.WAFModeChangeLog, int64, error) {
+	return s.configRepo.GetModeChangeLogs(ctx, startTime, endTime, page, pageSize)
 }

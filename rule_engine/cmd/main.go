@@ -83,15 +83,17 @@ func main() {
 	ipService := service.NewIPRuleService(ipRepo, cacheRepo)
 	ccService := service.NewCCRuleService(ccRepo, cacheRepo)
 	versionService := service.NewRuleVersionService(versionRepo)
+	configService := service.NewWAFConfigService(mysql.NewWAFConfigRepository(sqlDB), cacheRepo)
 
 	// 初始化处理器
 	ruleHandler := handler.NewRuleHandler(ruleService, versionService)
 	ipHandler := handler.NewIPRuleHandler(ipService)
 	ccHandler := handler.NewCCRuleHandler(ccService)
 	versionHandler := handler.NewRuleVersionHandler(versionService)
+	configHandler := handler.NewConfigHandler(configService)
 
 	// 设置路由
-	r := router.SetupRouter(ruleHandler, ipHandler, ccHandler, versionHandler)
+	r := router.SetupRouter(ruleHandler, ipHandler, ccHandler, versionHandler, configHandler)
 
 	// 创建HTTP服务器
 	srv := server.NewServer(cfg.Server, r)

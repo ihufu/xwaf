@@ -14,6 +14,17 @@
 }
 ```
 
+### WAF运行模式说明
+WAF运行模式由规则引擎统一管理，支持以下模式：
+- **block**: 阻断模式，匹配规则时直接阻断请求
+- **log**: 日志模式，只记录日志，不阻断请求
+- **bypass**: 旁路模式，完全放行所有请求
+
+可通过规则引擎的API进行查看和管理：
+- 获取当前模式: GET /api/v1/config/mode
+- 更新运行模式: PUT /api/v1/config/mode
+- 查看变更日志: GET /api/v1/config/mode/logs
+
 ## 2. 速率限制配置 (rate_limit)
 ```json
 {
