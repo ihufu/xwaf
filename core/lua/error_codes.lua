@@ -15,7 +15,7 @@ _M.codes = {
     WAF_CONFIG_ERROR = 1001,         -- 配置错误
     WAF_RUNTIME_ERROR = 1002,        -- 运行时错误
     WAF_SYSTEM_ERROR = 1003,         -- 系统错误
-    WAF_TEMPLATE_ERROR = 1004,       -- 模板错误
+    WAF_VALIDATION_ERROR = 1004,     -- 验证错误
     
     -- 请求错误 (2000-2999) (对应 Go: ErrXxx)
     WAF_INVALID_REQUEST = 2000,      -- 无效请求
@@ -59,7 +59,7 @@ local error_messages = {
     [_M.codes.WAF_CONFIG_ERROR] = "配置错误",
     [_M.codes.WAF_RUNTIME_ERROR] = "运行时错误",
     [_M.codes.WAF_SYSTEM_ERROR] = "系统错误",
-    [_M.codes.WAF_TEMPLATE_ERROR] = "模板错误",
+    [_M.codes.WAF_VALIDATION_ERROR] = "验证错误",
     
     -- 请求错误
     [_M.codes.WAF_INVALID_REQUEST] = "无效的请求",

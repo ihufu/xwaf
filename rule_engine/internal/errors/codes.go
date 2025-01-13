@@ -20,6 +20,7 @@ const (
 	ErrRequestTooLarge  ErrorCode = 2002 // 请求过大：请求体超过允许的大小限制
 	ErrInvalidParams    ErrorCode = 2003 // 无效参数：请求参数格式错误或取值范围错误
 	ErrRateLimit        ErrorCode = 2004 // 请求频率限制：超过接口调用频率限制
+	ErrRateLimitError   ErrorCode = 2005 // 速率限制错误：速率限制功能异常
 
 	// 规则错误 (3000-3999)
 	ErrRuleEngine     ErrorCode = 3000 // 规则引擎错误：规则引擎内部错误
@@ -63,6 +64,7 @@ var ErrorMessage = map[ErrorCode]string{
 	ErrRequestTooLarge:  "请求内容过大，请减小请求体积",
 	ErrInvalidParams:    "无效的请求参数，请检查参数格式和取值范围",
 	ErrRateLimit:        "请求频率超限，请稍后重试",
+	ErrRateLimitError:   "速率限制功能异常，请联系技术支持",
 
 	// 规则错误
 	ErrRuleEngine:     "规则引擎处理失败，请重试或联系技术支持",
