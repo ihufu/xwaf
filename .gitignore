@@ -1,18 +1,15 @@
+# 忽略所有.开头的文件和目录
+.*
+!.gitignore  # 不忽略 .gitignore 文件本身
+
 # 忽略特定目录
 old_rule_engine/
-.clinerules
-.cursorrules
-.windsurfrules
 logs/
 
 # 编译输出
 bin/
 *.exe
 *.out
-
-# IDE 配置
-.idea/
-.vscode/
 
 # 日志文件
 *.log
