@@ -93,10 +93,23 @@ func main() {
 	configHandler := handler.NewConfigHandler(configService)
 
 	// 设置路由
-	r := router.SetupRouter(ruleHandler, ipHandler, ccHandler, versionHandler, configHandler)
+	routerConfig := &router.RouterConfig{
+		RuleHandler:    ruleHandler,
+		IPHandler:      ipHandler,
+		CCHandler:      ccHandler,
+		VersionHandler: versionHandler,
+		ConfigHandler:  configHandler,
+	}
+	r, err := router.SetupRouter(routerConfig)
+	if err != nil {
+		logger.Fatal("设置路由失败: %v", err)
+	}
 
 	// 创建HTTP服务器
-	srv := server.NewServer(cfg.Server, r)
+	srv, err := server.NewServer(cfg.Server, r)
+	if err != nil {
+		logger.Fatal("创建HTTP服务器失败: %v", err)
+	}
 
 	// 启动HTTP服务器
 	go func() {

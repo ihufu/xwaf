@@ -3,16 +3,38 @@ package router
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/xwaf/rule_engine/internal/errors"
 	"github.com/xwaf/rule_engine/internal/handler"
+	"github.com/xwaf/rule_engine/internal/middleware"
+	"github.com/xwaf/rule_engine/pkg/logger"
 	"github.com/xwaf/rule_engine/pkg/metrics"
 )
 
 // SetupRouter 设置路由
-func SetupRouter(ruleHandler *handler.RuleHandler, ipHandler *handler.IPRuleHandler, ccHandler *handler.CCRuleHandler, versionHandler *handler.RuleVersionHandler) *gin.Engine {
+func SetupRouter(ruleHandler *handler.RuleHandler, ipHandler *handler.IPRuleHandler, ccHandler *handler.CCRuleHandler, versionHandler *handler.RuleVersionHandler) (*gin.Engine, error) {
+	// 验证处理器
+	if ruleHandler == nil {
+		return nil, errors.NewError(errors.ErrInit, "规则处理器不能为空")
+	}
+	if ipHandler == nil {
+		return nil, errors.NewError(errors.ErrInit, "IP规则处理器不能为空")
+	}
+	if ccHandler == nil {
+		return nil, errors.NewError(errors.ErrInit, "CC规则处理器不能为空")
+	}
+	if versionHandler == nil {
+		return nil, errors.NewError(errors.ErrInit, "版本处理器不能为空")
+	}
+
 	r := gin.Default()
 
 	// 添加中间件
+	r.Use(middleware.RequestID()) // 生成请求ID
+	r.Use(middleware.Logger())    // 请求日志
+	r.Use(middleware.Recovery())  // 错误恢复
 	r.Use(metrics.APIMetricsMiddleware)
+
+	logger.Info("初始化路由...")
 
 	// API路由组
 	api := r.Group("/api/v1")
@@ -61,5 +83,6 @@ func SetupRouter(ruleHandler *handler.RuleHandler, ipHandler *handler.IPRuleHand
 	// 监控指标
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	return r
+	logger.Info("路由初始化完成")
+	return r, nil
 }

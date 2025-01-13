@@ -12,6 +12,7 @@ import (
 	"github.com/xwaf/rule_engine/internal/model"
 	"github.com/xwaf/rule_engine/internal/repository"
 	"github.com/xwaf/rule_engine/internal/service"
+	"github.com/xwaf/rule_engine/pkg/logger"
 )
 
 // RuleHandler 规则处理器
@@ -22,6 +23,12 @@ type RuleHandler struct {
 
 // NewRuleHandler 创建规则处理器
 func NewRuleHandler(ruleService service.RuleService, versionService service.RuleVersionService) *RuleHandler {
+	if ruleService == nil {
+		panic(errors.NewError(errors.ErrConfig, "规则服务不能为空"))
+	}
+	if versionService == nil {
+		panic(errors.NewError(errors.ErrConfig, "版本服务不能为空"))
+	}
 	return &RuleHandler{
 		ruleService:    ruleService,
 		versionService: versionService,
@@ -30,18 +37,23 @@ func NewRuleHandler(ruleService service.RuleService, versionService service.Rule
 
 // ListRules 获取规则列表
 func (h *RuleHandler) ListRules(c *gin.Context) {
+	requestID := c.GetString("request_id")
+	logger.Infof("获取规则列表: RequestID=%s", requestID)
+
 	// 获取分页参数
 	page := c.DefaultQuery("page", "1")
 	size := c.DefaultQuery("size", "10")
 
 	pageNum, err := strconv.Atoi(page)
 	if err != nil || pageNum <= 0 {
+		logger.Errorf("无效的页码: RequestID=%s, Page=%s", requestID, page)
 		Error(c, errors.NewError(errors.ErrInvalidParams, "页码必须大于0"))
 		return
 	}
 
 	pageSize, err := strconv.Atoi(size)
 	if err != nil || pageSize <= 0 || pageSize > 100 {
+		logger.Errorf("无效的页大小: RequestID=%s, Size=%s", requestID, size)
 		Error(c, errors.NewError(errors.ErrInvalidParams, "页大小必须在1-100之间"))
 		return
 	}
@@ -63,26 +75,74 @@ func (h *RuleHandler) ListRules(c *gin.Context) {
 		OrderDesc:      c.Query("order_desc") == "true",
 	}
 
+	// 验证查询参数
+	if query.Status != "" {
+		switch query.Status {
+		case model.StatusEnabled, model.StatusDisabled:
+			// 合法的状态值
+		default:
+			logger.Errorf("无效的状态值: RequestID=%s, Status=%s", requestID, query.Status)
+			Error(c, errors.NewError(errors.ErrInvalidParams, fmt.Sprintf("无效的状态值: %s", query.Status)))
+			return
+		}
+	}
+	if query.RuleType != "" {
+		switch query.RuleType {
+		case model.RuleTypeIP, model.RuleTypeCC, model.RuleTypeRegex, model.RuleTypeSQLi, model.RuleTypeXSS, model.RuleTypeCustom:
+			// 合法的规则类型
+		default:
+			logger.Errorf("无效的规则类型: RequestID=%s, RuleType=%s", requestID, query.RuleType)
+			Error(c, errors.NewError(errors.ErrInvalidParams, fmt.Sprintf("无效的规则类型: %s", query.RuleType)))
+			return
+		}
+	}
+	if query.Severity != "" {
+		switch query.Severity {
+		case model.SeverityHigh, model.SeverityMedium, model.SeverityLow:
+			// 合法的严重程度
+		default:
+			logger.Errorf("无效的严重程度: RequestID=%s, Severity=%s", requestID, query.Severity)
+			Error(c, errors.NewError(errors.ErrInvalidParams, fmt.Sprintf("无效的严重程度: %s", query.Severity)))
+			return
+		}
+	}
+
 	// 解析时间范围
 	if startTime := c.Query("start_time"); startTime != "" {
 		t, err := time.Parse(time.RFC3339, startTime)
-		if err == nil {
-			query.StartTime = &t
+		if err != nil {
+			logger.Errorf("无效的开始时间: RequestID=%s, StartTime=%s, Error=%v", requestID, startTime, err)
+			Error(c, errors.NewError(errors.ErrInvalidParams, fmt.Sprintf("无效的开始时间格式: %s", startTime)))
+			return
 		}
+		query.StartTime = &t
 	}
 	if endTime := c.Query("end_time"); endTime != "" {
 		t, err := time.Parse(time.RFC3339, endTime)
-		if err == nil {
-			query.EndTime = &t
+		if err != nil {
+			logger.Errorf("无效的结束时间: RequestID=%s, EndTime=%s, Error=%v", requestID, endTime, err)
+			Error(c, errors.NewError(errors.ErrInvalidParams, fmt.Sprintf("无效的结束时间格式: %s", endTime)))
+			return
 		}
+		query.EndTime = &t
+	}
+
+	// 验证时间范围
+	if query.StartTime != nil && query.EndTime != nil && query.StartTime.After(*query.EndTime) {
+		logger.Errorf("无效的时间范围: RequestID=%s, StartTime=%v, EndTime=%v",
+			requestID, query.StartTime, query.EndTime)
+		Error(c, errors.NewError(errors.ErrInvalidParams, "开始时间不能晚于结束时间"))
+		return
 	}
 
 	rules, total, err := h.ruleService.ListRules(c.Request.Context(), query)
 	if err != nil {
-		Error(c, errors.NewError(errors.ErrRuleEngine, err.Error()))
+		logger.Errorf("获取规则列表失败: RequestID=%s, Error=%v", requestID, err)
+		Error(c, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取规则列表失败: %v", err)))
 		return
 	}
 
+	logger.Infof("获取规则列表成功: RequestID=%s, Total=%d", requestID, total)
 	Success(c, gin.H{
 		"rules": rules,
 		"total": total,
@@ -93,15 +153,20 @@ func (h *RuleHandler) ListRules(c *gin.Context) {
 
 // CreateRule 创建规则
 func (h *RuleHandler) CreateRule(c *gin.Context) {
+	requestID := c.GetString("request_id")
+	logger.Infof("创建规则: RequestID=%s", requestID)
+
 	var rule model.Rule
 	if err := c.ShouldBindJSON(&rule); err != nil {
-		Error(c, errors.NewError(errors.ErrInvalidParams, err.Error()))
+		logger.Errorf("请求参数错误: RequestID=%s, Error=%v", requestID, err)
+		Error(c, errors.NewError(errors.ErrInvalidParams, fmt.Sprintf("请求参数错误: %v", err)))
 		return
 	}
 
 	// 规则验证
 	if err := rule.Validate(); err != nil {
-		Error(c, errors.NewError(errors.ErrInvalidParams, err.Error()))
+		logger.Errorf("规则验证失败: RequestID=%s, Error=%v", requestID, err)
+		Error(c, err)
 		return
 	}
 
@@ -109,50 +174,77 @@ func (h *RuleHandler) CreateRule(c *gin.Context) {
 	if userID := getUserID(c); userID > 0 {
 		rule.CreatedBy = userID
 		rule.UpdatedBy = userID
+	} else {
+		logger.Errorf("获取用户ID失败: RequestID=%s", requestID)
+		Error(c, errors.NewError(errors.ErrInvalidParams, "无法获取用户ID"))
+		return
 	}
 
+	// 设置创建时间
+	now := time.Now()
+	rule.CreatedAt = now
+	rule.UpdatedAt = now
+
 	if err := h.ruleService.CreateRule(c.Request.Context(), &rule); err != nil {
-		Error(c, errors.NewError(errors.ErrRuleEngine, err.Error()))
+		logger.Errorf("创建规则失败: RequestID=%s, Error=%v", requestID, err)
+		Error(c, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("创建规则失败: %v", err)))
 		return
 	}
 
 	// 创建审计日志
-	h.createAuditLog(c.Request.Context(), &model.RuleAuditLog{
+	auditLog := &model.RuleAuditLog{
 		RuleID:    rule.ID,
 		Action:    "create",
 		Operator:  strconv.FormatInt(rule.CreatedBy, 10),
 		NewValue:  toString(rule),
-		CreatedAt: time.Now(),
-	})
+		CreatedAt: now,
+	}
+	if err := h.createAuditLog(c.Request.Context(), auditLog); err != nil {
+		// 仅记录错误，不影响主流程
+		logger.Errorf("创建审计日志失败: RequestID=%s, Error=%v", requestID, err)
+	}
 
+	logger.Infof("创建规则成功: RequestID=%s, RuleID=%d", requestID, rule.ID)
 	Success(c, rule)
 }
 
 // UpdateRule 更新规则
 func (h *RuleHandler) UpdateRule(c *gin.Context) {
+	requestID := c.GetString("request_id")
+	logger.Infof("更新规则: RequestID=%s", requestID)
+
 	id := c.Param("id")
 	ruleID, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
-		Error(c, errors.NewError(errors.ErrInvalidParams, "无效的规则ID"))
+		logger.Errorf("无效的规则ID: RequestID=%s, ID=%s", requestID, id)
+		Error(c, errors.NewError(errors.ErrInvalidParams, fmt.Sprintf("无效的规则ID: %s", id)))
 		return
 	}
 
 	// 获取原规则
 	oldRule, err := h.ruleService.GetRule(c.Request.Context(), ruleID)
 	if err != nil {
-		Error(c, errors.NewError(errors.ErrRuleEngine, err.Error()))
+		logger.Errorf("获取原规则失败: RequestID=%s, RuleID=%d, Error=%v", requestID, ruleID, err)
+		Error(c, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取原规则失败: %v", err)))
+		return
+	}
+	if oldRule == nil {
+		logger.Errorf("规则不存在: RequestID=%s, RuleID=%d", requestID, ruleID)
+		Error(c, errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("规则不存在: %d", ruleID)))
 		return
 	}
 
 	var rule model.Rule
 	if err := c.ShouldBindJSON(&rule); err != nil {
-		Error(c, errors.NewError(errors.ErrInvalidParams, err.Error()))
+		logger.Errorf("请求参数错误: RequestID=%s, Error=%v", requestID, err)
+		Error(c, errors.NewError(errors.ErrInvalidParams, fmt.Sprintf("请求参数错误: %v", err)))
 		return
 	}
 
 	// 规则验证
 	if err := rule.Validate(); err != nil {
-		Error(c, errors.NewError(errors.ErrInvalidParams, err.Error()))
+		logger.Errorf("规则验证失败: RequestID=%s, Error=%v", requestID, err)
+		Error(c, err)
 		return
 	}
 
@@ -160,77 +252,126 @@ func (h *RuleHandler) UpdateRule(c *gin.Context) {
 	// 设置更新者
 	if userID := getUserID(c); userID > 0 {
 		rule.UpdatedBy = userID
+	} else {
+		logger.Errorf("获取用户ID失败: RequestID=%s", requestID)
+		Error(c, errors.NewError(errors.ErrInvalidParams, "无法获取用户ID"))
+		return
 	}
 
+	// 设置更新时间
+	rule.UpdatedAt = time.Now()
+
 	if err := h.ruleService.UpdateRule(c.Request.Context(), &rule); err != nil {
-		Error(c, errors.NewError(errors.ErrRuleEngine, err.Error()))
+		logger.Errorf("更新规则失败: RequestID=%s, Error=%v", requestID, err)
+		Error(c, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("更新规则失败: %v", err)))
 		return
 	}
 
 	// 创建审计日志
-	h.createAuditLog(c.Request.Context(), &model.RuleAuditLog{
+	auditLog := &model.RuleAuditLog{
 		RuleID:    rule.ID,
 		Action:    "update",
 		Operator:  strconv.FormatInt(rule.UpdatedBy, 10),
 		OldValue:  toString(oldRule),
 		NewValue:  toString(rule),
 		CreatedAt: time.Now(),
-	})
+	}
+	if err := h.createAuditLog(c.Request.Context(), auditLog); err != nil {
+		// 仅记录错误，不影响主流程
+		logger.Errorf("创建审计日志失败: RequestID=%s, Error=%v", requestID, err)
+	}
 
+	logger.Infof("更新规则成功: RequestID=%s, RuleID=%d", requestID, rule.ID)
 	Success(c, rule)
 }
 
 // DeleteRule 删除规则
 func (h *RuleHandler) DeleteRule(c *gin.Context) {
+	requestID := c.GetString("request_id")
+	logger.Infof("删除规则: RequestID=%s", requestID)
+
 	id := c.Param("id")
 	ruleID, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
-		Error(c, errors.NewError(errors.ErrInvalidParams, "无效的规则ID"))
+		logger.Errorf("无效的规则ID: RequestID=%s, ID=%s", requestID, id)
+		Error(c, errors.NewError(errors.ErrInvalidParams, fmt.Sprintf("无效的规则ID: %s", id)))
 		return
 	}
 
 	// 获取原规则
 	oldRule, err := h.ruleService.GetRule(c.Request.Context(), ruleID)
 	if err != nil {
-		Error(c, errors.NewError(errors.ErrRuleEngine, err.Error()))
+		logger.Errorf("获取原规则失败: RequestID=%s, RuleID=%d, Error=%v", requestID, ruleID, err)
+		Error(c, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("获取原规则失败: %v", err)))
+		return
+	}
+	if oldRule == nil {
+		logger.Errorf("规则不存在: RequestID=%s, RuleID=%d", requestID, ruleID)
+		Error(c, errors.NewError(errors.ErrRuleNotFound, fmt.Sprintf("规则不存在: %d", ruleID)))
+		return
+	}
+
+	// 获取当前用户ID
+	userID := getUserID(c)
+	if userID <= 0 {
+		logger.Errorf("获取用户ID失败: RequestID=%s", requestID)
+		Error(c, errors.NewError(errors.ErrInvalidParams, "无法获取用户ID"))
 		return
 	}
 
 	if err := h.ruleService.DeleteRule(c.Request.Context(), ruleID); err != nil {
-		Error(c, errors.NewError(errors.ErrRuleEngine, err.Error()))
+		logger.Errorf("删除规则失败: RequestID=%s, RuleID=%d, Error=%v", requestID, ruleID, err)
+		Error(c, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("删除规则失败: %v", err)))
 		return
 	}
 
 	// 创建审计日志
-	h.createAuditLog(c.Request.Context(), &model.RuleAuditLog{
+	auditLog := &model.RuleAuditLog{
 		RuleID:    ruleID,
 		Action:    "delete",
-		Operator:  strconv.FormatInt(getUserID(c), 10),
+		Operator:  strconv.FormatInt(userID, 10),
 		OldValue:  toString(oldRule),
 		CreatedAt: time.Now(),
-	})
+	}
+	if err := h.createAuditLog(c.Request.Context(), auditLog); err != nil {
+		// 仅记录错误，不影响主流程
+		logger.Errorf("创建审计日志失败: RequestID=%s, Error=%v", requestID, err)
+	}
 
+	logger.Infof("删除规则成功: RequestID=%s, RuleID=%d", requestID, ruleID)
 	Success(c, nil)
 }
 
 // CheckRule 检查规则匹配
 func (h *RuleHandler) CheckRule(c *gin.Context) {
+	requestID := c.GetString("request_id")
+	logger.Infof("检查规则匹配: RequestID=%s", requestID)
+
 	var req model.CheckRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		Error(c, errors.NewError(errors.ErrInvalidParams, err.Error()))
+		logger.Errorf("请求数据格式错误: RequestID=%s, Error=%v", requestID, err)
+		Error(c, errors.NewError(errors.ErrInvalidParams, fmt.Sprintf("请求数据格式错误: %v", err)))
 		return
 	}
 
 	// 验证请求参数
 	if err := req.Validate(); err != nil {
-		Error(c, errors.NewError(errors.ErrInvalidParams, err.Error()))
+		logger.Errorf("请求参数验证失败: RequestID=%s, Error=%v", requestID, err)
+		Error(c, err)
 		return
 	}
 
 	result, err := h.ruleService.CheckRequest(c.Request.Context(), &req)
 	if err != nil {
-		Error(c, errors.NewError(errors.ErrRuleEngine, err.Error()))
+		logger.Errorf("检查规则匹配失败: RequestID=%s, Error=%v", requestID, err)
+		Error(c, errors.NewError(errors.ErrRuleEngine, fmt.Sprintf("检查规则匹配失败: %v", err)))
 		return
+	}
+
+	if result.Matched {
+		logger.Infof("规则匹配成功: RequestID=%s, Rule=%s, Action=%s", requestID, result.MatchedRule.Name, result.Action)
+	} else {
+		logger.Infof("未匹配任何规则: RequestID=%s", requestID)
 	}
 
 	Success(c, result)
@@ -602,9 +743,9 @@ func toString(v interface{}) string {
 }
 
 // createAuditLog 创建审计日志
-func (h *RuleHandler) createAuditLog(ctx context.Context, log *model.RuleAuditLog) {
+func (h *RuleHandler) createAuditLog(ctx context.Context, log *model.RuleAuditLog) error {
 	if err := h.ruleService.CreateRuleAuditLog(ctx, log); err != nil {
-		// 只记录错误日志，不影响主流程
-		fmt.Printf("创建审计日志失败: %v\n", err)
+		return errors.NewError(errors.ErrSystem, fmt.Sprintf("创建审计日志失败: %v", err))
 	}
+	return nil
 }
